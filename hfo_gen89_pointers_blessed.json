@@ -1,0 +1,77 @@
+{
+  "$schema": "hfo.gen89.pointers.blessed.v1",
+  "version": "gen89_v1",
+  "built": "2026-02-18",
+  "operator": "TTAO",
+  "note": "Blessed pointer registry for Gen89 cold start. All paths relative to HFO_ROOT. Resolve via hfo_pointers.py.",
+  "pointers": {
+    "root.agents_md": {
+      "path": "AGENTS.md",
+      "desc": "Root SSOT for all agent governance"
+    },
+    "root.env_example": {
+      "path": ".env.example",
+      "desc": "Environment template (copy to .env)"
+    },
+    "root.pointers_blessed": {
+      "path": "hfo_gen89_pointers_blessed.json",
+      "desc": "This file — blessed pointer registry"
+    },
+    "root.gitignore": {
+      "path": ".gitignore",
+      "desc": "Git ignore rules"
+    },
+    "forge.root": {
+      "path": "hfo_gen_89_hot_obsidian_forge",
+      "desc": "The Forge — all medallion layers"
+    },
+    "forge.bronze": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze",
+      "desc": "Bronze layer — unvalidated working data"
+    },
+    "forge.bronze.resources": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources",
+      "desc": "Bronze scratch scripts and working artifacts"
+    },
+    "forge.bronze.projects": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/projects",
+      "desc": "Bronze project definitions"
+    },
+    "forge.silver": {
+      "path": "hfo_gen_89_hot_obsidian_forge/1_silver",
+      "desc": "Silver layer — human-reviewed / validated"
+    },
+    "forge.silver.resources": {
+      "path": "hfo_gen_89_hot_obsidian_forge/1_silver/resources",
+      "desc": "Silver validated resources"
+    },
+    "forge.gold": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold",
+      "desc": "Gold layer — hardened, trusted"
+    },
+    "forge.gold.resources": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources",
+      "desc": "Gold hardened resources"
+    },
+    "forge.hfo": {
+      "path": "hfo_gen_89_hot_obsidian_forge/3_hyper_fractal_obsidian",
+      "desc": "HFO meta-layer — architecture, governance"
+    },
+    "ssot.db": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/hfo_gen89_ssot.sqlite",
+      "desc": "SSOT SQLite database (149 MB, self-describing Memory Quine)"
+    },
+    "pal.resolver": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py",
+      "desc": "Pointer resolver script"
+    },
+    "pal.precommit": {
+      "path": ".githooks/pre-commit",
+      "desc": "Pre-commit hook (medallion gate + root cleanliness)"
+    },
+    "octree.invariants": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/hfo_legendary_commanders_invariants.v1.json",
+      "desc": "8-port octree invariants (locked fields)"
+    }
+  }
+}

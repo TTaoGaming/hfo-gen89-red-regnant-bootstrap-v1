@@ -1,0 +1,93 @@
+#!/bin/sh
+# ─── HFO Gen89 Pre-Commit Hook ───────────────────────────────
+# Gate: medallion boundary + root cleanliness + no secrets
+# Install: git config core.hooksPath .githooks
+# ──────────────────────────────────────────────────────────────
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+ERRORS=0
+
+echo "═══ HFO Gen89 Pre-Commit Gate ═══"
+
+# ── 1. Root Cleanliness ──────────────────────────────────────
+# Only allowed root files (no deep forge stuff leaking to root)
+ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.githooks|hfo_gen89_pointers_blessed\.json|hfo_gen_89_hot_obsidian_forge|LICENSE|README\.md|\.git"
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+for f in $STAGED_FILES; do
+    # Check if file is at root (no / in path means root-level)
+    dir=$(dirname "$f")
+    if [ "$dir" = "." ]; then
+        base=$(basename "$f")
+        if ! echo "$base" | grep -qE "^($ALLOWED_ROOT)$"; then
+            echo "${RED}✗ ROOT VIOLATION:${NC} $f is not in the allowed root file list"
+            echo "  Move to forge: hfo_gen_89_hot_obsidian_forge/0_bronze/"
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+done
+
+if [ $ERRORS -eq 0 ]; then
+    echo "${GREEN}✓${NC} Root cleanliness OK"
+fi
+
+# ── 2. No Secrets ────────────────────────────────────────────
+SECRET_PATTERNS="\.env$|\.hfo_secret|\.pem$|\.key$|password|api_key|secret_key"
+
+for f in $STAGED_FILES; do
+    if echo "$f" | grep -qiE "$SECRET_PATTERNS"; then
+        # .env.example is allowed
+        if [ "$f" != ".env.example" ]; then
+            echo "${RED}✗ SECRET LEAK:${NC} $f matches secret pattern"
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+done
+
+if [ $ERRORS -eq 0 ]; then
+    echo "${GREEN}✓${NC} No secrets staged"
+fi
+
+# ── 3. Medallion Boundary ────────────────────────────────────
+# Bronze cannot write to silver/gold/hfo directly
+# (This is a soft gate — warns but doesn't block in cold start)
+for f in $STAGED_FILES; do
+    case "$f" in
+        *1_silver/*|*2_gold/*|*3_hyper_fractal_obsidian/*)
+            # Allow the SSOT database and .gitkeep
+            case "$f" in
+                *.sqlite|*.gitkeep|*hfo_legendary_commanders_invariants*)
+                    ;;
+                *)
+                    echo "${YELLOW}⚠ MEDALLION CROSSING:${NC} $f — direct write to non-bronze layer"
+                    echo "  Ensure this was promoted through a validation gate."
+                    ;;
+            esac
+            ;;
+    esac
+done
+
+# ── 4. Large File Warning ────────────────────────────────────
+for f in $STAGED_FILES; do
+    if [ -f "$f" ]; then
+        size=$(wc -c < "$f" 2>/dev/null || echo 0)
+        if [ "$size" -gt 10485760 ]; then
+            echo "${YELLOW}⚠ LARGE FILE:${NC} $f ($(($size / 1048576)) MB) — consider Git LFS"
+        fi
+    fi
+done
+
+# ── Result ────────────────────────────────────────────────────
+if [ $ERRORS -gt 0 ]; then
+    echo ""
+    echo "${RED}═══ BLOCKED: $ERRORS error(s). Fix and retry. ═══${NC}"
+    exit 1
+else
+    echo "${GREEN}═══ PASSED: All gates clear. ═══${NC}"
+    exit 0
+fi

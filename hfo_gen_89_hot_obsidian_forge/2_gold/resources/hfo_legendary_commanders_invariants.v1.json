@@ -1,0 +1,172 @@
+{
+  "schema": "hfo.legendary_commanders.invariants.v1",
+  "version": "v1",
+  "created_utc": "2026-01-27",
+  "locked_fields": [
+    "port_index",
+    "port_id",
+    "port_label",
+    "commander_name",
+    "powerword",
+    "jadc2_domain",
+    "mosaic_tile",
+    "binary",
+    "trigram.name",
+    "trigram.element",
+    "octree_bits"
+  ],
+  "holonarchy": {
+    "model": "fractal_octree",
+    "root": "HFO",
+    "depth_1": {
+      "ports": 8,
+      "binary_bits": 3,
+      "address_space": ["000", "001", "010", "011", "100", "101", "110", "111"],
+      "note": "Ports P0–P7 are the 8 depth-1 octree nodes addressed by 3-bit binary. Higher-order holons/subshards recurse this 0–7 scheme (e.g., scope paths like P2.3.5.*)."
+    }
+  },
+  "ports": [
+    {
+      "port_index": 0,
+      "port_id": "P0",
+      "port_label": "SENSE",
+      "powerword": "OBSERVE",
+      "commander_name": "THE LIDLESS LEGION",
+      "jadc2_domain": "ISR (Observer)",
+      "mosaic_tile": "SENSE",
+      "binary": "000",
+      "octree_bits": [0, 0, 0],
+      "trigram": { "name": "Kun", "symbol": "☷", "element": "Earth" },
+      "notes": [
+        "Focus: telemetry acquisition / sensing; produces raw observations for fusion."
+      ]
+    },
+    {
+      "port_index": 1,
+      "port_id": "P1",
+      "port_label": "FUSE",
+      "powerword": "BRIDGE",
+      "commander_name": "THE WEB WEAVER",
+      "jadc2_domain": "Fusion / Joint Data Fabric (Bridger)",
+      "mosaic_tile": "FUSE",
+      "binary": "100",
+      "octree_bits": [1, 0, 0],
+      "trigram": { "name": "Gen", "symbol": "☶", "element": "Mountain" },
+      "notes": [
+        "Focus: schema bridge + data fabric; converts heterogeneous signals into a unified typed stream."
+      ]
+    },
+    {
+      "port_index": 2,
+      "port_id": "P2",
+      "port_label": "SHAPE",
+      "powerword": "SHAPE",
+      "commander_name": "THE MIRROR MAGUS",
+      "jadc2_domain": "Modeling / Digital Twin / COA Development (Shaper)",
+      "mosaic_tile": "SHAPE",
+      "binary": "010",
+      "octree_bits": [0, 1, 0],
+      "trigram": { "name": "Kan", "symbol": "☵", "element": "Water" },
+      "notes": [
+        "Focus: geometry/physics manifold + digital twin; owns SHAPE-domain data formats.",
+        "Invariant: Touch2D cursor frames and W3C PointerEvent-shaped payloads are treated as SHAPE-layer formats (normalized here before any downstream injection)."
+      ],
+      "formats": {
+        "touch2d": {
+          "role": "cursor_frame",
+          "example_fields": ["uiNormX", "uiNormY", "handIndex", "pointerId", "dt", "now"]
+        },
+        "w3c_pointer": {
+          "role": "platform_event_shape",
+          "example_fields": ["pointerId", "clientX", "clientY", "buttons", "pointerType", "timeStamp"]
+        }
+      }
+    },
+    {
+      "port_index": 3,
+      "port_id": "P3",
+      "port_label": "DELIVER",
+      "powerword": "INJECT",
+      "commander_name": "HARMONIC HYDRA",
+      "jadc2_domain": "Effect Delivery / Precision Strike (Injector)",
+      "mosaic_tile": "DELIVER",
+      "binary": "110",
+      "octree_bits": [1, 1, 0],
+      "trigram": { "name": "Xun", "symbol": "☴", "element": "Wind" },
+      "notes": [
+        "Focus: dispatch/injection; consumes SHAPE outputs and delivers effects into the target substrate (e.g., W3C events / injectors)."
+      ]
+    },
+    {
+      "port_index": 4,
+      "port_id": "P4",
+      "port_label": "DISRUPT",
+      "powerword": "DISRUPT",
+      "commander_name": "RED REGNANT",
+      "jadc2_domain": "Multi-Domain Operations / EW / Cyber (Disruptor)",
+      "mosaic_tile": "DISRUPT",
+      "binary": "001",
+      "octree_bits": [0, 0, 1],
+      "trigram": { "name": "Zhen", "symbol": "☳", "element": "Thunder" },
+      "notes": [
+        "Focus: adversarial pressure, suppression, mutation/culling; creates evolutionary stressors."
+      ]
+    },
+    {
+      "port_index": 5,
+      "port_id": "P5",
+      "port_label": "DEFEND",
+      "powerword": "IMMUNIZE",
+      "commander_name": "PYRE PRAETORIAN",
+      "jadc2_domain": "Cyber Defense / Zero Trust / Resurrection (Immunizer)",
+      "mosaic_tile": "DEFEND",
+      "binary": "101",
+      "octree_bits": [1, 0, 1],
+      "trigram": { "name": "Li", "symbol": "☲", "element": "Fire" },
+      "notes": [
+        "Focus: integrity, hard gates, fail-closed boundaries, resurrection/phoenix protocols."
+      ]
+    },
+    {
+      "port_index": 6,
+      "port_id": "P6",
+      "port_label": "STORE",
+      "powerword": "ASSIMILATE",
+      "commander_name": "KRAKEN KEEPER",
+      "jadc2_domain": "Post-Mission Analysis / Data Repository (Assimilator)",
+      "mosaic_tile": "STORE",
+      "binary": "011",
+      "octree_bits": [0, 1, 1],
+      "trigram": { "name": "Dui", "symbol": "☱", "element": "Lake" },
+      "notes": [
+        "Focus: memory/telemetry assimilation (e.g., SSOT + derived views) and AAR rollups."
+      ]
+    },
+    {
+      "port_index": 7,
+      "port_id": "P7",
+      "port_label": "NAVIGATE",
+      "powerword": "NAVIGATE",
+      "commander_name": "SPIDER SOVEREIGN",
+      "jadc2_domain": "Battle Management Command and Control (Navigator)",
+      "mosaic_tile": "NAVIGATE",
+      "binary": "111",
+      "octree_bits": [1, 1, 1],
+      "trigram": { "name": "Qian", "symbol": "☰", "element": "Heaven" },
+      "notes": [
+        "Focus: orchestration/mission engineering; aligns the 8-port holonarchy to objectives."
+      ]
+    }
+  ],
+  "provenance": {
+    "primary_sources": [
+      "hfo_hot_obsidian/silver/3_resources/reports/HFO_GRIMOIRE_8_COMMANDERS_TRIPLE_SIDED_HYPER_SLIVER_ARISTOCRATS_2026_01_22.md",
+      "hfo_hot_obsidian_forge/2_gold/2_resources/reports/hive8_doctrine/HFO_HIVE8_META_PROMOTED_DELIVERABLES_GALOIS_LATTICE_PROTOCOL_V1_2026_01_26.md",
+      "hfo_hot_obsidian/bronze/3_resources/projects_archive_2026_01_18/hfo_mtg_commanders/LEGENDARY_HFO_COMMANDERS_V7_HYDRA_ASCENDANT.md",
+      ".github/agents/hfo_hive_8_agent_gen_88_v_4.agent.md"
+    ],
+    "drift_notes": [
+      "Some older Bronze doctrine files contain a different P1/P3/P6 binary assignment; this invariants file follows the 2026-01-22 operator-corrected port→binary→trigram order from the Silver grimoire."
+    ]
+  }
+}

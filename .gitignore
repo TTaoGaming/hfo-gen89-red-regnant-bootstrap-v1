@@ -1,0 +1,45 @@
+# ─── HFO Gen89 .gitignore ───────────────────────────────────
+# Rule: root stays clean. Forge holds everything.
+# Rule: secrets never committed. Artifacts are ephemeral.
+
+# ── Secrets ──────────────────────────────────────────────────
+.env
+.hfo_secret
+*.pem
+*.key
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# ── Node (if used) ───────────────────────────────────────────
+node_modules/
+package-lock.json
+
+# ── IDE ──────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ───────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ── Ephemeral artifacts (never commit temp outputs) ──────────
+artifacts/tmp/
+*.log
+temp/
+
+# ── SQLite WAL/SHM (DB itself IS committed) ─────────────────
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
