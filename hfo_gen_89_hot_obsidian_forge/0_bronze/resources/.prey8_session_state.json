@@ -1,0 +1,29 @@
+{
+  "session_id": "034c5ac3bc522425",
+  "perceive_nonce": "27B8B5",
+  "react_token": "FDE048",
+  "execute_tokens": [],
+  "phase": "reacted",
+  "chain": [
+    {
+      "step": "PERCEIVE",
+      "nonce": "27B8B5",
+      "chain_hash": "aaf94d4a0871b742eb9b4e6933d85bfbfab48084d182322852aa849c19731ba8",
+      "parent_chain_hash": "GENESIS",
+      "stigmergy_row_id": 9757,
+      "timestamp": "2026-02-19T04:16:25.250384+00:00"
+    },
+    {
+      "step": "REACT",
+      "nonce": "FDE048",
+      "chain_hash": "83ed0cfeb8d1d087de58e1d79e66ae6a26ca8bcc23a97e9b7caa1090385f1a67",
+      "parent_chain_hash": "aaf94d4a0871b742eb9b4e6933d85bfbfab48084d182322852aa849c19731ba8",
+      "stigmergy_row_id": 9758,
+      "timestamp": "2026-02-19T04:16:42.105437+00:00"
+    }
+  ],
+  "started_at": "2026-02-19T04:16:25.250384+00:00",
+  "memory_loss_count": 2,
+  "saved_at": "2026-02-19T04:16:42.113756+00:00",
+  "server_version": "v3.0"
+}

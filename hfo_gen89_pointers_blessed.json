@@ -108,6 +108,30 @@
     "swarm.model_manager": {
       "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_model_manager.py",
       "desc": "Ollama model manager — pull, list, tier-based loading"
+    },
+    "daemon.octree": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_octree_daemon.py",
+      "desc": "8-daemon persistent swarm — all 8 Octree commanders with Nataraja engine"
+    },
+    "daemon.p5_contingency": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p5_contingency.py",
+      "desc": "P5 CONTINGENCY spell — automated resurrection, Phoenix Protocol, death monitoring"
+    },
+    "agent.p5_pyre_praetorian": {
+      "path": ".github/agents/hfo_gen_89_p5_pyre_praetorian_bootstrap_v1.agent.md",
+      "desc": "P5 Pyre Praetorian custom agent definition for VS Code Copilot"
+    },
+    "chimera.loop": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p2_chimera_loop.py",
+      "desc": "P2 Chimera Loop — evolutionary DSE for Red Regnant persona optimization"
+    },
+    "chimera.eval_harness": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/prey8_eval_harness.py",
+      "desc": "PREY8 eval harness — 20 HumanEval-style problems for chimera fitness"
+    },
+    "daemon.p5_pyre_praetorian": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p5_pyre_praetorian.py",
+      "desc": "P5 Pyre Praetorian daemon — resource governance, LifecycleManager, fail-closed gates, Three Rings, Phoenix Protocol, governed eval with SW-4 receipts"
     }
   }
 }
