@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
 """
-hfo_prey8_mcp_server.py — PREY8 Loop MCP Server v2 (P4 Red Regnant)
+hfo_prey8_mcp_server.py — PREY8 Loop MCP Server v3 (P4 Red Regnant)
 
-Tamper-evident 4-step hash-chained nonce system:
-  P — Perceive  (writes CloudEvent, returns nonce + chain_hash)
-  R — React     (writes CloudEvent, validates parent, returns react_token + chain_hash)
-  E — Execute   (writes CloudEvent, validates parent, returns exec_token + chain_hash)
-  Y — Yield     (writes CloudEvent, validates full chain, closes loop)
+Fail-closed port-pair gates on every PREY8 step:
+  P — Perceive  = P0 OBSERVE + P6 ASSIMILATE  (sensing + memory)
+  R — React     = P1 BRIDGE + P7 NAVIGATE     (data fabric + Meadows steering)
+  E — Execute   = P2 SHAPE + P4 DISRUPT       (SBE creation + adversarial testing)
+  Y — Yield     = P3 INJECT + P5 IMMUNIZE     (delivery + Stryker-style testing)
 
-Architecture: "Correct by construction mosaic tiles"
-  - Each step is a self-contained CloudEvent (tile) with its own hash
-  - Each tile references its parent's hash (parent_chain_hash)
-  - The mosaic (session) is the ordered set of tiles linked by hashes
+Gate enforcement:
+  - Each step has MANDATORY structured fields tied to its octree port pair
+  - Missing or empty fields = GATE_BLOCKED = bricked agent (cannot proceed)
+  - No SSOT write occurs when a gate blocks — the agent must retry with proper fields
+  - The agent cannot hallucinate past a gate; it must supply structured evidence
+
+Tamper-evident hash chain (from v2):
+  - chain_hash = SHA256(parent_chain_hash : nonce : event_data)
+  - Each tile references its parent's hash (Merkle-like)
   - Missing tiles = memory loss = automatically detected and recorded
-  - Every nonce request auto-logs to SSOT (zero silent state changes)
 
-Session state is persisted to disk for memory loss recovery.
-Memory loss events are tracked with full diagnostic data.
+Design sources from SSOT:
+  - Doc 129: PREY8 <-> Port mapping (P0+P6, P1+P7, P2+P4, P3+P5)
+  - Doc 317: Meadows 12 Leverage Levels synthesis
+  - Doc 128: Powerword Spellbook (port workflows)
+  - Doc 12:  SBE Towers Pattern (5-part: invariant, happy-path, juice, perf, lifecycle)
+  - Doc 4:   6-Defense SDD Stack (red-first, structural sep, mutation wall, props, GRUDGE, review)
+  - Doc 263: P2-P5 Safety Spine
 
 MCP server protocol: stdio
 Run: python hfo_prey8_mcp_server.py
@@ -57,7 +66,7 @@ SESSION_STATE_PATH = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "
 GEN = os.environ.get("HFO_GENERATION", "89")
 OPERATOR = os.environ.get("HFO_OPERATOR", "TTAO")
 SECRET = os.environ.get("HFO_SECRET", "prey8_mcp_default_secret")
-SERVER_VERSION = "v2.0"
+SERVER_VERSION = "v3.0"
 SOURCE_TAG = f"hfo_prey8_mcp_gen{GEN}_{SERVER_VERSION}"
 
 # In-memory session state (also persisted to disk)
@@ -110,6 +119,15 @@ def _trace_ids():
     trace_id = secrets.token_hex(16)
     span_id = secrets.token_hex(8)
     return trace_id, span_id
+
+
+# ---------------------------------------------------------------------------
+# Helpers — Parsing
+# ---------------------------------------------------------------------------
+
+def _split_csv(s: str) -> list:
+    """Split comma-separated string into non-empty trimmed items."""
+    return [x.strip() for x in s.split(",") if x.strip()] if s else []
 
 
 # ---------------------------------------------------------------------------
@@ -226,28 +244,21 @@ def _detect_memory_loss() -> list:
     """
     Check SSOT for unclosed PREY8 sessions (perceive without matching yield).
     Returns list of orphaned sessions with diagnostic data.
-
-    This is the observability backbone: the LLM is hallucinatory,
-    but the hash chain is deterministic. Memory loss = broken chain.
     """
     conn = _get_conn()
     orphans = []
     try:
-        # Find recent perceive events
         perceives = list(conn.execute(
             """SELECT id, timestamp, data_json FROM stigmergy_events
                WHERE event_type LIKE '%prey8.perceive%'
                ORDER BY timestamp DESC LIMIT 20"""
         ))
-
-        # Find recent yield events
         yields = list(conn.execute(
             """SELECT id, timestamp, data_json FROM stigmergy_events
                WHERE event_type LIKE '%prey8.yield%'
                ORDER BY timestamp DESC LIMIT 20"""
         ))
 
-        # Extract perceive nonces
         perceive_nonces = {}
         for row in perceives:
             try:
@@ -264,7 +275,6 @@ def _detect_memory_loss() -> list:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Extract yield perceive_nonces (which perceive they closed)
         closed_nonces = set()
         for row in yields:
             try:
@@ -276,7 +286,6 @@ def _detect_memory_loss() -> list:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Orphans = perceives without matching yields
         for nonce, info in perceive_nonces.items():
             if nonce not in closed_nonces:
                 orphans.append({
@@ -294,13 +303,10 @@ def _detect_memory_loss() -> list:
 
 
 def _record_memory_loss(orphan_data: dict, recovery_source: str):
-    """
-    Write a memory_loss CloudEvent to SSOT.
-    Every memory loss is tracked with full diagnostic data.
-    """
+    """Write a memory_loss CloudEvent to SSOT."""
     event_data = {
         "loss_type": "session_state_reset",
-        "recovery_source": recovery_source,  # "disk" or "ssot_scan"
+        "recovery_source": recovery_source,
         "orphaned_perceive_nonce": orphan_data.get("perceive_nonce", ""),
         "orphaned_session_id": orphan_data.get("session_id", ""),
         "orphaned_timestamp": orphan_data.get("timestamp", ""),
@@ -312,8 +318,7 @@ def _record_memory_loss(orphan_data: dict, recovery_source: str):
         "diagnostic": (
             "MCP server restarted or session state lost. "
             "The perceive event was written to SSOT but no matching yield was found. "
-            "This indicates the agent session was interrupted without closing the PREY8 loop. "
-            "The chain is broken at this point."
+            "This indicates the agent session was interrupted without closing the PREY8 loop."
         ),
     }
     event = _cloudevent(
@@ -330,18 +335,15 @@ def _check_and_recover_session():
     """
     On server start / perceive: check for prior session state on disk.
     If found with unclosed session, record memory loss and clean up.
-    Returns recovery info or None.
     """
     prior = _load_session()
     if not prior:
         return None
 
-    # If prior session was idle or yielded, nothing to recover
     if prior.get("phase") in ("idle", "yielded", None):
         _clear_session_file()
         return None
 
-    # Prior session was active (perceived/reacted/executing) -- memory loss!
     orphan_data = {
         "perceive_nonce": prior.get("perceive_nonce", ""),
         "session_id": prior.get("session_id", ""),
@@ -366,38 +368,183 @@ def _check_and_recover_session():
 
 
 # ---------------------------------------------------------------------------
+# Fail-Closed Gate Validation
+# ---------------------------------------------------------------------------
+
+# The Octree port-pair mapping for PREY8 (from SSOT Doc 129):
+#   P = P0 OBSERVE  + P6 ASSIMILATE  (sensing + memory)
+#   R = P1 BRIDGE   + P7 NAVIGATE    (data fabric + steering)
+#   E = P2 SHAPE    + P4 DISRUPT     (creation + adversarial testing)
+#   Y = P3 INJECT   + P5 IMMUNIZE    (delivery + defense)
+#
+# Each gate requires structured fields matching its port pair's workflow.
+# Missing fields = GATE_BLOCKED. No SSOT write. Agent is bricked.
+
+GATE_SPECS = {
+    "PERCEIVE": {
+        "port_pair": "P0_OBSERVE + P6_ASSIMILATE",
+        "required_fields": ["observations", "memory_refs", "stigmergy_digest"],
+        "description": "Must supply sensing data (P0) and memory references (P6)",
+    },
+    "REACT": {
+        "port_pair": "P1_BRIDGE + P7_NAVIGATE",
+        "required_fields": [
+            "shared_data_refs", "navigation_intent",
+            "meadows_level", "meadows_justification", "sequential_plan",
+        ],
+        "description": "Must supply data fabric refs (P1), Meadows level, and navigation strategy (P7)",
+    },
+    "EXECUTE": {
+        "port_pair": "P2_SHAPE + P4_DISRUPT",
+        "required_fields": [
+            "sbe_given", "sbe_when", "sbe_then",
+            "artifacts", "p4_adversarial_check", "fail_closed_gate",
+        ],
+        "description": "Must supply SBE spec (P2), artifacts, adversarial check (P4), and explicit gate pass",
+    },
+    "YIELD": {
+        "port_pair": "P3_INJECT + P5_IMMUNIZE",
+        "required_fields": [
+            "delivery_manifest", "test_evidence",
+            "mutation_confidence", "immunization_status",
+            "completion_given", "completion_when", "completion_then",
+        ],
+        "description": "Must supply delivery manifest (P3), test evidence, Stryker receipt, and SW-4 contract (P5)",
+    },
+}
+
+
+def _validate_gate(gate_name: str, fields: dict) -> Optional[dict]:
+    """
+    Validate that all required gate fields are non-empty.
+    Returns None if valid, or a GATE_BLOCKED error dict if invalid.
+
+    This is the fail-closed mechanism: missing/empty fields = bricked agent.
+    No SSOT write occurs. The agent cannot hallucinate past a gate.
+    """
+    spec = GATE_SPECS[gate_name]
+    missing = []
+    empty = []
+
+    for field_name in spec["required_fields"]:
+        value = fields.get(field_name)
+        if value is None:
+            missing.append(field_name)
+        elif isinstance(value, str) and not value.strip():
+            empty.append(field_name)
+        elif isinstance(value, list) and len(value) == 0:
+            empty.append(field_name)
+        elif isinstance(value, bool) and value is False:
+            # For fail_closed_gate: must be explicitly True
+            empty.append(field_name)
+        elif isinstance(value, int) and field_name == "meadows_level":
+            if value < 1 or value > 12:
+                empty.append(f"{field_name}(must be 1-12, got {value})")
+        elif isinstance(value, int) and field_name == "mutation_confidence":
+            if value < 0 or value > 100:
+                empty.append(f"{field_name}(must be 0-100, got {value})")
+
+    if missing or empty:
+        # Write a gate_blocked event to SSOT for observability
+        # (this is the only write that happens on failure — tracking the failure itself)
+        block_data = {
+            "gate": gate_name,
+            "port_pair": spec["port_pair"],
+            "missing_fields": missing,
+            "empty_fields": empty,
+            "session_id": _session.get("session_id", "pre-session"),
+            "timestamp": _now_iso(),
+            "server_version": SERVER_VERSION,
+        }
+        block_event = _cloudevent(
+            f"hfo.gen{GEN}.prey8.gate_blocked",
+            block_data,
+            "prey-gate-blocked",
+        )
+        _write_stigmergy(block_event)
+
+        return {
+            "status": "GATE_BLOCKED",
+            "gate": gate_name,
+            "port_pair": spec["port_pair"],
+            "description": spec["description"],
+            "missing_fields": missing,
+            "empty_fields": empty,
+            "bricked": True,
+            "instruction": (
+                f"FAIL-CLOSED: {gate_name} gate blocked. "
+                f"Port pair {spec['port_pair']} requires all structured fields. "
+                f"Supply: {', '.join(missing + empty)} then retry. "
+                "This violation has been logged to SSOT."
+            ),
+        }
+    return None
+
+
+# ---------------------------------------------------------------------------
 # MCP Server
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP("HFO PREY8 Red Regnant v2")
+mcp = FastMCP("HFO PREY8 Red Regnant v3 — Fail-Closed Gates")
 
 
-# ===== PERCEIVE =====
+# ===== PERCEIVE — P0 OBSERVE + P6 ASSIMILATE =====
 
 @mcp.tool()
-def prey8_perceive(probe: str) -> dict:
+def prey8_perceive(
+    probe: str,
+    observations: str,
+    memory_refs: str,
+    stigmergy_digest: str,
+) -> dict:
     """
     P -- PERCEIVE: Start a PREY8 session. First tile in the mosaic.
+    Port pair: P0 OBSERVE + P6 ASSIMILATE (sensing + memory).
 
+    FAIL-CLOSED GATE: You MUST supply all three structured fields:
+    - observations: What you sensed from SSOT search (P0 OBSERVE workflow:
+      SENSE -> CALIBRATE -> RANK -> EMIT). Use prey8_fts_search and
+      prey8_query_stigmergy BEFORE calling this.
+    - memory_refs: Comma-separated document IDs you read from SSOT
+      (P6 ASSIMILATE workflow: POINT -> DECOMPOSE -> REENGINEER -> EVALUATE ->
+      ARCHIVE -> ITERATE). Use prey8_read_document BEFORE calling this.
+    - stigmergy_digest: Summary of recent stigmergy events you consumed
+      for session continuity.
+
+    If ANY field is empty, you are GATE_BLOCKED. No SSOT write. Cannot proceed.
+
+    Also performs internally:
     - Checks for memory loss (unclosed prior sessions)
-    - Queries SSOT for context (9,859+ docs, 9,590+ stigmergy events)
-    - Reads recent yields from other sessions (swarm continuity)
-    - Runs FTS5 search against the database
-    - Writes a perceive CloudEvent to SSOT (auto-logged)
-    - Returns nonce + chain_hash (tile 0 of the mosaic)
-
-    The nonce is REQUIRED by prey8_react. The chain_hash links to subsequent tiles.
+    - Queries SSOT for context stats
+    - Reads recent yields (swarm continuity)
+    - Runs FTS5 search for the probe
 
     Args:
         probe: The user's intent or question for this session.
+        observations: Comma-separated observations from P0 OBSERVE sensing.
+        memory_refs: Comma-separated document IDs consumed from P6 ASSIMILATE.
+        stigmergy_digest: Summary of recent stigmergy signals consumed.
 
     Returns:
-        dict with: nonce, chain_hash, session_id, memory_loss_info, context
+        dict with: nonce, chain_hash, session_id, gate_receipt, context
+        OR GATE_BLOCKED if structured fields are missing.
     """
-    # Step 0: Check for memory loss from prior sessions
-    recovery_info = _check_and_recover_session()
+    # ---- FAIL-CLOSED GATE: P0 OBSERVE + P6 ASSIMILATE ----
+    obs_list = _split_csv(observations)
+    mem_list = _split_csv(memory_refs)
 
-    # Also scan SSOT for orphaned perceives
+    gate_block = _validate_gate("PERCEIVE", {
+        "observations": obs_list,
+        "memory_refs": mem_list,
+        "stigmergy_digest": stigmergy_digest,
+    })
+    if gate_block:
+        return gate_block
+
+    # ---- Gate passed — proceed with perceive ----
+
+    # Check for memory loss from prior sessions
+    recovery_info = _check_and_recover_session()
     orphans = _detect_memory_loss()
 
     conn = _get_conn()
@@ -406,7 +553,7 @@ def prey8_perceive(probe: str) -> dict:
         doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         event_count = conn.execute("SELECT COUNT(*) FROM stigmergy_events").fetchone()[0]
 
-        # Recent yields (n+1 perceive ingests recent yields from swarm)
+        # Recent yields (swarm continuity)
         recent_yields = []
         for row in conn.execute(
             """SELECT id, event_type, timestamp, substr(data_json, 1, 3000)
@@ -423,14 +570,12 @@ def prey8_perceive(probe: str) -> dict:
                     "summary": yield_data.get("summary", ""),
                     "artifacts": yield_data.get("artifacts_created", []),
                     "next_steps": yield_data.get("next_steps", []),
-                    "insights": yield_data.get("insights", []),
                     "nonce": yield_data.get("nonce", ""),
-                    "chain_hash": yield_data.get("chain_hash", ""),
                 })
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Recent non-yield events
+        # Recent events
         recent_events = []
         for row in conn.execute(
             """SELECT id, event_type, timestamp, subject
@@ -442,7 +587,7 @@ def prey8_perceive(probe: str) -> dict:
                 "timestamp": row[2], "subject": row[3],
             })
 
-        # FTS search if probe is useful
+        # FTS search
         fts_results = []
         if probe and len(probe.strip()) > 2:
             safe_probe = " OR ".join(
@@ -471,27 +616,34 @@ def prey8_perceive(probe: str) -> dict:
         nonce = _nonce()
         sid = _session_id()
 
-        # Build event data
+        # Build event data (includes gate fields for auditability)
         event_data = {
             "probe": probe,
             "nonce": nonce,
             "session_id": sid,
             "ts": _now_iso(),
+            # Gate-enforced structured fields (P0 + P6)
+            "p0_observations": obs_list,
+            "p6_memory_refs": mem_list,
+            "p6_stigmergy_digest": stigmergy_digest.strip(),
+            "gate": "PERCEIVE",
+            "port_pair": "P0_OBSERVE + P6_ASSIMILATE",
+            "gate_passed": True,
+            # Context
             "encounter_count": len(recent_yields),
             "doc_count": doc_count,
             "event_count": event_count,
-            "p6_gate": None,
             "server_version": SERVER_VERSION,
             "chain_position": 0,
-            "parent_chain_hash": "GENESIS",  # First tile has no parent
+            "parent_chain_hash": "GENESIS",
         }
 
-        # Compute chain hash for this tile
+        # Compute chain hash
         data_json = json.dumps(event_data, sort_keys=True)
         c_hash = _chain_hash("GENESIS", nonce, data_json)
         event_data["chain_hash"] = c_hash
 
-        # Write to SSOT (auto-logged on nonce generation)
+        # Write to SSOT
         event = _cloudevent(
             f"hfo.gen{GEN}.prey8.perceive",
             event_data,
@@ -515,7 +667,7 @@ def prey8_perceive(probe: str) -> dict:
         }]
         _session["started_at"] = event_data["ts"]
 
-        # Persist to disk (survives MCP restart)
+        # Persist to disk
         _save_session()
 
         return {
@@ -525,6 +677,14 @@ def prey8_perceive(probe: str) -> dict:
             "session_id": sid,
             "stigmergy_row_id": row_id,
             "chain_position": 0,
+            "gate_receipt": {
+                "gate": "PERCEIVE",
+                "port_pair": "P0_OBSERVE + P6_ASSIMILATE",
+                "passed": True,
+                "observations_count": len(obs_list),
+                "memory_refs_count": len(mem_list),
+                "stigmergy_digest_length": len(stigmergy_digest.strip()),
+            },
             "doc_count": doc_count,
             "event_count": event_count + 1,
             "recent_yields": recent_yields,
@@ -536,37 +696,71 @@ def prey8_perceive(probe: str) -> dict:
                 "orphan_details": orphans[:3],
             },
             "instruction": (
-                f"TILE 0 PLACED. Nonce: {nonce}, Chain: {c_hash[:12]}... "
+                f"TILE 0 PLACED [P0+P6 GATE PASSED]. Nonce: {nonce}, Chain: {c_hash[:12]}... "
                 f"Session: {sid}. "
-                "You MUST call prey8_react with this nonce to place tile 1."
+                "You MUST call prey8_react with this nonce to place tile 1. "
+                "React requires: shared_data_refs, navigation_intent, meadows_level(1-12), "
+                "meadows_justification, sequential_plan."
             ),
         }
     finally:
         conn.close()
 
 
-# ===== REACT =====
+# ===== REACT — P1 BRIDGE + P7 NAVIGATE =====
 
 @mcp.tool()
-def prey8_react(perceive_nonce: str, analysis: str, plan: str) -> dict:
+def prey8_react(
+    perceive_nonce: str,
+    analysis: str,
+    plan: str,
+    shared_data_refs: str,
+    navigation_intent: str,
+    meadows_level: int,
+    meadows_justification: str,
+    sequential_plan: str,
+) -> dict:
     """
-    R -- REACT: Analyze context. Second tile in the mosaic.
+    R -- REACT: Analyze context and form strategy. Second tile in the mosaic.
+    Port pair: P1 BRIDGE + P7 NAVIGATE (data fabric + strategic steering).
 
-    Validates the perceive nonce (chain integrity check).
-    Writes a react CloudEvent to SSOT (auto-logged).
-    Returns react_token + chain_hash for the execute step.
+    FAIL-CLOSED GATE: You MUST supply all five structured fields:
+    - shared_data_refs: Comma-separated cross-references bridged from other
+      contexts or data sources (P1 BRIDGE workflow: DISCOVER -> EXTRACT ->
+      CONTRACT -> BIND -> VERIFY). What data did you connect?
+    - navigation_intent: Your strategic direction and C2 steering decision
+      (P7 NAVIGATE workflow: MAP -> LATTICE -> PRUNE -> SELECT -> DISPATCH).
+      Where are you steering the session?
+    - meadows_level: Which Meadows leverage level (1-12) this session operates at.
+      L1=Parameters, L2=Buffers, L3=Structure, L4=Delays, L5=Negative feedback,
+      L6=Info flows, L7=Positive feedback, L8=Rules, L9=Self-org, L10=Goal,
+      L11=Paradigm, L12=Transcend paradigms.
+    - meadows_justification: Why you chose this leverage level. What makes
+      this the right level of intervention?
+    - sequential_plan: Comma-separated ordered reasoning steps. The structured
+      plan the agent will follow through Execute.
 
-    The react_token is REQUIRED by prey8_execute.
-    The chain_hash links this tile to the perceive tile.
+    If ANY field is empty or meadows_level is not 1-12, you are GATE_BLOCKED.
+
+    Also validates:
+    - perceive_nonce matches (tamper check)
+    - Phase is 'perceived' (flow enforcement)
 
     Args:
         perceive_nonce: The nonce from prey8_perceive (REQUIRED -- tamper check).
         analysis: Your interpretation of the context from Perceive.
-        plan: Your structured plan of action (what you will do and why).
+        plan: Your high-level plan of action (what and why).
+        shared_data_refs: Comma-separated P1 BRIDGE cross-references.
+        navigation_intent: P7 NAVIGATE strategic direction.
+        meadows_level: Meadows leverage level 1-12.
+        meadows_justification: Why this leverage level.
+        sequential_plan: Comma-separated ordered reasoning steps.
 
     Returns:
-        dict with: react_token, chain_hash, chain_position
+        dict with: react_token, chain_hash, gate_receipt
+        OR GATE_BLOCKED if structured fields are missing.
     """
+    # ---- Phase check ----
     if _session["phase"] != "perceived":
         return {
             "status": "ERROR",
@@ -574,8 +768,9 @@ def prey8_react(perceive_nonce: str, analysis: str, plan: str) -> dict:
                      "You must call prey8_perceive first.",
             "tamper_evidence": "Phase violation detected. This is logged.",
         }
+
+    # ---- Nonce tamper check ----
     if perceive_nonce != _session["perceive_nonce"]:
-        # TAMPER ALERT: nonce mismatch -- log it to SSOT
         alert_data = {
             "alert_type": "nonce_mismatch",
             "step": "REACT",
@@ -590,19 +785,32 @@ def prey8_react(perceive_nonce: str, analysis: str, plan: str) -> dict:
             "prey-tamper-alert",
         )
         _write_stigmergy(alert_event)
-
         return {
             "status": "ERROR",
             "error": f"TAMPER ALERT: Nonce mismatch. Expected '{_session['perceive_nonce']}', "
                      f"got '{perceive_nonce}'. This violation has been logged to SSOT.",
         }
 
-    # Get parent chain hash from perceive tile
-    parent_hash = _session["chain"][-1]["chain_hash"]
+    # ---- FAIL-CLOSED GATE: P1 BRIDGE + P7 NAVIGATE ----
+    data_refs_list = _split_csv(shared_data_refs)
+    plan_steps_list = _split_csv(sequential_plan)
 
+    gate_block = _validate_gate("REACT", {
+        "shared_data_refs": data_refs_list,
+        "navigation_intent": navigation_intent,
+        "meadows_level": meadows_level,
+        "meadows_justification": meadows_justification,
+        "sequential_plan": plan_steps_list,
+    })
+    if gate_block:
+        return gate_block
+
+    # ---- Gate passed — proceed with react ----
+
+    parent_hash = _session["chain"][-1]["chain_hash"]
     react_token = _nonce()
 
-    # Build event data
+    # Build event data (includes gate fields for auditability)
     event_data = {
         "perceive_nonce": perceive_nonce,
         "react_token": react_token,
@@ -610,17 +818,27 @@ def prey8_react(perceive_nonce: str, analysis: str, plan: str) -> dict:
         "analysis": analysis[:2000],
         "plan": plan[:2000],
         "ts": _now_iso(),
+        # Gate-enforced structured fields (P1 + P7)
+        "p1_shared_data_refs": data_refs_list,
+        "p7_navigation_intent": navigation_intent.strip(),
+        "p7_meadows_level": meadows_level,
+        "p7_meadows_justification": meadows_justification.strip(),
+        "p7_sequential_plan": plan_steps_list,
+        "gate": "REACT",
+        "port_pair": "P1_BRIDGE + P7_NAVIGATE",
+        "gate_passed": True,
+        # Chain
         "chain_position": 1,
         "parent_chain_hash": parent_hash,
         "server_version": SERVER_VERSION,
     }
 
-    # Compute chain hash for this tile
+    # Compute chain hash
     data_json = json.dumps(event_data, sort_keys=True)
     c_hash = _chain_hash(parent_hash, react_token, data_json)
     event_data["chain_hash"] = c_hash
 
-    # Write to SSOT (auto-logged)
+    # Write to SSOT
     event = _cloudevent(
         f"hfo.gen{GEN}.prey8.react",
         event_data,
@@ -651,47 +869,92 @@ def prey8_react(perceive_nonce: str, analysis: str, plan: str) -> dict:
         "session_id": _session["session_id"],
         "stigmergy_row_id": row_id,
         "parent_chain_hash": parent_hash,
+        "gate_receipt": {
+            "gate": "REACT",
+            "port_pair": "P1_BRIDGE + P7_NAVIGATE",
+            "passed": True,
+            "shared_data_refs_count": len(data_refs_list),
+            "meadows_level": meadows_level,
+            "meadows_justification": meadows_justification[:200],
+            "sequential_plan_steps": len(plan_steps_list),
+            "navigation_intent": navigation_intent[:200],
+        },
         "p4_directive": (
             "P4 RED REGNANT -- Adversarial coaching protocol active. "
-            "Challenge assumptions. Seek edge cases. Validate before trusting. "
-            "Your analysis and plan are now written to SSOT."
+            f"Operating at Meadows Level {meadows_level}. "
+            "Challenge assumptions. Seek edge cases. Validate before trusting."
         ),
         "analysis_hash": hashlib.sha256(analysis.encode()).hexdigest()[:16],
         "plan_hash": hashlib.sha256(plan.encode()).hexdigest()[:16],
         "instruction": (
-            f"TILE 1 PLACED. Token: {react_token}, Chain: {c_hash[:12]}... "
-            "Now call prey8_execute for each action, then prey8_yield to close."
+            f"TILE 1 PLACED [P1+P7 GATE PASSED]. Token: {react_token}, Chain: {c_hash[:12]}... "
+            f"Meadows L{meadows_level}. {len(plan_steps_list)} plan steps logged. "
+            "Now call prey8_execute for each action. Execute requires: "
+            "sbe_given, sbe_when, sbe_then, artifacts, p4_adversarial_check, fail_closed_gate=true."
         ),
     }
 
 
-# ===== EXECUTE =====
+# ===== EXECUTE — P2 SHAPE + P4 DISRUPT =====
 
 @mcp.tool()
-def prey8_execute(react_token: str, action_summary: str) -> dict:
+def prey8_execute(
+    react_token: str,
+    action_summary: str,
+    sbe_given: str,
+    sbe_when: str,
+    sbe_then: str,
+    artifacts: str,
+    p4_adversarial_check: str,
+    fail_closed_gate: bool = False,
+) -> dict:
     """
     E -- EXECUTE: Track an execution step. Middle tile(s) in the mosaic.
+    Port pair: P2 SHAPE + P4 DISRUPT (creation + adversarial testing).
 
+    FAIL-CLOSED GATE: You MUST supply all six structured fields:
+    - sbe_given: SBE precondition — "Given <context>" (P2 SHAPE workflow:
+      PARSE -> CONSTRAIN -> GENERATE -> VALIDATE -> MEDAL). What is the
+      starting state before this action?
+    - sbe_when: SBE action — "When <action>". What are you doing?
+    - sbe_then: SBE postcondition — "Then <expected result>". What should
+      be true after this action succeeds?
+    - artifacts: Comma-separated artifacts created or modified in this step
+      (P2 SHAPE output). What did you produce?
+    - p4_adversarial_check: How was this step adversarially challenged?
+      (P4 DISRUPT workflow: SURVEY -> HYPOTHESIZE -> ATTACK -> RECORD ->
+      EVOLVE). What could go wrong? What edge cases exist?
+    - fail_closed_gate: MUST be explicitly True. This is the fail-closed
+      assertion — you are stating "I have verified this step meets the gate
+      requirements." Default is False = blocked.
+
+    If ANY field is empty or fail_closed_gate is not True, you are GATE_BLOCKED.
     Can be called multiple times for multi-step work.
-    Each call writes an execute CloudEvent to SSOT (auto-logged).
-    Validates the react_token (chain integrity check).
-    Returns exec_token + chain_hash linking to the previous tile.
 
     Args:
         react_token: The token from prey8_react (REQUIRED -- tamper check).
-        action_summary: Brief description of what you're doing/did in this step.
+        action_summary: Brief description of what you're doing in this step.
+        sbe_given: SBE Given precondition (P2 SHAPE).
+        sbe_when: SBE When action (P2 SHAPE).
+        sbe_then: SBE Then postcondition (P2 SHAPE).
+        artifacts: Comma-separated artifacts created/modified.
+        p4_adversarial_check: How this step was adversarially challenged (P4 DISRUPT).
+        fail_closed_gate: Must be True to pass. Default False = blocked.
 
     Returns:
-        dict with: execute_token, chain_hash, step_number
+        dict with: execute_token, chain_hash, gate_receipt, step_number
+        OR GATE_BLOCKED if structured fields are missing.
     """
+    # ---- Phase check ----
     if _session["phase"] not in ("reacted", "executing"):
         return {
             "status": "ERROR",
             "error": f"Cannot Execute -- current phase is '{_session['phase']}'. "
                      "You must call prey8_react first.",
         }
+
+    # ---- Token tamper check ----
     if react_token != _session["react_token"]:
-        # TAMPER ALERT
         alert_data = {
             "alert_type": "react_token_mismatch",
             "step": "EXECUTE",
@@ -706,20 +969,33 @@ def prey8_execute(react_token: str, action_summary: str) -> dict:
             "prey-tamper-alert",
         )
         _write_stigmergy(alert_event)
-
         return {
             "status": "ERROR",
             "error": f"TAMPER ALERT: React token mismatch. "
                      f"Expected '{_session['react_token']}', got '{react_token}'. Logged to SSOT.",
         }
 
-    # Get parent chain hash from previous tile
-    parent_hash = _session["chain"][-1]["chain_hash"]
+    # ---- FAIL-CLOSED GATE: P2 SHAPE + P4 DISRUPT ----
+    artifacts_list = _split_csv(artifacts)
 
+    gate_block = _validate_gate("EXECUTE", {
+        "sbe_given": sbe_given,
+        "sbe_when": sbe_when,
+        "sbe_then": sbe_then,
+        "artifacts": artifacts_list,
+        "p4_adversarial_check": p4_adversarial_check,
+        "fail_closed_gate": fail_closed_gate,
+    })
+    if gate_block:
+        return gate_block
+
+    # ---- Gate passed — proceed with execute ----
+
+    parent_hash = _session["chain"][-1]["chain_hash"]
     exec_token = _nonce()
     step_num = len(_session["execute_tokens"]) + 1
 
-    # Build event data
+    # Build event data (includes gate fields for auditability)
     event_data = {
         "perceive_nonce": _session["perceive_nonce"],
         "react_token": react_token,
@@ -728,17 +1004,30 @@ def prey8_execute(react_token: str, action_summary: str) -> dict:
         "action_summary": action_summary[:2000],
         "step_number": step_num,
         "ts": _now_iso(),
-        "chain_position": 1 + step_num,  # 0=P, 1=R, 2+=E
+        # Gate-enforced structured fields (P2 + P4)
+        "p2_sbe_spec": {
+            "given": sbe_given.strip(),
+            "when": sbe_when.strip(),
+            "then": sbe_then.strip(),
+        },
+        "p2_artifacts": artifacts_list,
+        "p4_adversarial_check": p4_adversarial_check.strip(),
+        "p4_fail_closed_gate": True,
+        "gate": "EXECUTE",
+        "port_pair": "P2_SHAPE + P4_DISRUPT",
+        "gate_passed": True,
+        # Chain
+        "chain_position": 1 + step_num,
         "parent_chain_hash": parent_hash,
         "server_version": SERVER_VERSION,
     }
 
-    # Compute chain hash for this tile
+    # Compute chain hash
     data_json = json.dumps(event_data, sort_keys=True)
     c_hash = _chain_hash(parent_hash, exec_token, data_json)
     event_data["chain_hash"] = c_hash
 
-    # Write to SSOT (auto-logged)
+    # Write to SSOT
     event = _cloudevent(
         f"hfo.gen{GEN}.prey8.execute",
         event_data,
@@ -751,6 +1040,7 @@ def prey8_execute(react_token: str, action_summary: str) -> dict:
         "token": exec_token,
         "action": action_summary[:500],
         "chain_hash": c_hash,
+        "sbe_spec": event_data["p2_sbe_spec"],
     })
     _session["phase"] = "executing"
     _session["chain"].append({
@@ -774,20 +1064,40 @@ def prey8_execute(react_token: str, action_summary: str) -> dict:
         "session_id": _session["session_id"],
         "stigmergy_row_id": row_id,
         "parent_chain_hash": parent_hash,
+        "gate_receipt": {
+            "gate": "EXECUTE",
+            "port_pair": "P2_SHAPE + P4_DISRUPT",
+            "passed": True,
+            "sbe_spec": event_data["p2_sbe_spec"],
+            "artifacts_count": len(artifacts_list),
+            "adversarial_check": p4_adversarial_check[:200],
+            "fail_closed_gate": True,
+        },
         "action_logged": action_summary[:500],
         "instruction": (
-            f"TILE {1 + step_num} PLACED. Step {step_num} logged to SSOT. "
+            f"TILE {1 + step_num} PLACED [P2+P4 GATE PASSED]. Step {step_num} logged. "
+            f"SBE: Given/When/Then + {len(artifacts_list)} artifacts + P4 adversarial check. "
             "Call prey8_execute again for more steps, "
-            "or call prey8_yield to close the mosaic."
+            "or call prey8_yield to close the mosaic. "
+            "Yield requires: delivery_manifest, test_evidence, mutation_confidence(0-100), "
+            "immunization_status, completion_given/when/then."
         ),
     }
 
 
-# ===== YIELD =====
+# ===== YIELD — P3 INJECT + P5 IMMUNIZE =====
 
 @mcp.tool()
 def prey8_yield(
     summary: str,
+    delivery_manifest: str,
+    test_evidence: str,
+    mutation_confidence: int,
+    immunization_status: str,
+    completion_given: str,
+    completion_when: str,
+    completion_then: str,
+    grudge_violations: str = "",
     artifacts_created: str = "",
     artifacts_modified: str = "",
     next_steps: str = "",
@@ -795,23 +1105,55 @@ def prey8_yield(
 ) -> dict:
     """
     Y -- YIELD: Close the PREY8 loop. Final tile in the mosaic.
+    Port pair: P3 INJECT + P5 IMMUNIZE (delivery + defense/testing).
 
-    Validates the entire chain, writes a yield CloudEvent with full chain
-    verification data. This is MANDATORY at session end.
+    FAIL-CLOSED GATE: You MUST supply all seven structured fields:
+    - delivery_manifest: Comma-separated list of what was delivered
+      (P3 INJECT workflow: PREFLIGHT -> PAYLOAD -> POSTFLIGHT -> PAYOFF).
+      What artifacts/changes/knowledge was injected into the system?
+    - test_evidence: Comma-separated list of tests or validations performed
+      (P5 IMMUNIZE workflow: DETECT -> QUARANTINE -> GATE -> HARDEN -> TEACH).
+      How was the delivery verified?
+    - mutation_confidence: 0-100 integer representing confidence in test
+      coverage (Stryker-inspired). 0 = no tests, 100 = mutation-tested.
+      From 6-Defense SDD Stack doc 4: "Mutation Wall (Stryker 80-99%)".
+    - immunization_status: "PASSED" or "FAILED" or "PARTIAL" — did the
+      P5 IMMUNIZE gate pass? Only PASSED means full confidence.
+    - completion_given: SW-4 Completion Contract — Given (precondition).
+    - completion_when: SW-4 Completion Contract — When (action taken).
+    - completion_then: SW-4 Completion Contract — Then (postcondition + evidence).
 
-    The yield event contains the complete chain_hashes array, allowing
-    any future agent to verify the entire session was tamper-free.
+    Optional fields:
+    - grudge_violations: Comma-separated GRUDGE guard violations detected
+      (from 6-Defense SDD Stack). Empty = none found.
+    - artifacts_created/modified: File paths (carried from v2 for compat).
+    - next_steps: Recommended next actions.
+    - insights: Key learnings or discoveries.
+
+    If ANY required field is empty, mutation_confidence is not 0-100, or
+    immunization_status is not PASSED/FAILED/PARTIAL, you are GATE_BLOCKED.
 
     Args:
         summary: What was accomplished in this session.
-        artifacts_created: Comma-separated list of created file paths.
-        artifacts_modified: Comma-separated list of modified file paths.
-        next_steps: Comma-separated list of recommended next actions.
-        insights: Comma-separated list of key learnings or discoveries.
+        delivery_manifest: Comma-separated P3 INJECT deliveries.
+        test_evidence: Comma-separated P5 IMMUNIZE test results.
+        mutation_confidence: 0-100 Stryker-inspired confidence score.
+        immunization_status: PASSED / FAILED / PARTIAL (P5 gate result).
+        completion_given: SW-4 Given precondition.
+        completion_when: SW-4 When action.
+        completion_then: SW-4 Then postcondition + evidence.
+        grudge_violations: Comma-separated GRUDGE violations (optional).
+        artifacts_created: Comma-separated created file paths (optional).
+        artifacts_modified: Comma-separated modified file paths (optional).
+        next_steps: Comma-separated next actions (optional).
+        insights: Comma-separated learnings (optional).
 
     Returns:
-        dict with: completion_receipt, nonce_chain, chain_verification
+        dict with: completion_receipt, chain_verification, gate_receipt,
+                   stryker_receipt, sw4_contract
+        OR GATE_BLOCKED if structured fields are missing.
     """
+    # ---- Phase check ----
     if _session["phase"] not in ("reacted", "executing"):
         return {
             "status": "ERROR",
@@ -819,11 +1161,40 @@ def prey8_yield(
                      "You must complete Perceive -> React (-> Execute) first.",
         }
 
+    # ---- Validate immunization_status value ----
+    valid_statuses = ("PASSED", "FAILED", "PARTIAL")
+    if immunization_status.strip().upper() not in valid_statuses:
+        return {
+            "status": "GATE_BLOCKED",
+            "gate": "YIELD",
+            "port_pair": "P3_INJECT + P5_IMMUNIZE",
+            "error": f"immunization_status must be one of {valid_statuses}, "
+                     f"got '{immunization_status}'",
+            "bricked": True,
+            "instruction": "Supply immunization_status as PASSED, FAILED, or PARTIAL.",
+        }
+
+    # ---- FAIL-CLOSED GATE: P3 INJECT + P5 IMMUNIZE ----
+    delivery_list = _split_csv(delivery_manifest)
+    test_list = _split_csv(test_evidence)
+
+    gate_block = _validate_gate("YIELD", {
+        "delivery_manifest": delivery_list,
+        "test_evidence": test_list,
+        "mutation_confidence": mutation_confidence,
+        "immunization_status": immunization_status,
+        "completion_given": completion_given,
+        "completion_when": completion_when,
+        "completion_then": completion_then,
+    })
+    if gate_block:
+        return gate_block
+
+    # ---- Gate passed — proceed with yield ----
+
     perceive_nonce = _session["perceive_nonce"]
     parent_hash = _session["chain"][-1]["chain_hash"]
-
-    def _split(s):
-        return [x.strip() for x in s.split(",") if x.strip()] if s else []
+    grudge_list = _split_csv(grudge_violations)
 
     conn = _get_conn()
     try:
@@ -838,7 +1209,10 @@ def prey8_yield(
     chain_hashes = [tile["chain_hash"] for tile in _session["chain"]]
     chain_steps = [tile["step"] for tile in _session["chain"]]
 
-    # Build event data
+    # Normalize immunization_status
+    imm_status = immunization_status.strip().upper()
+
+    # Build event data (includes gate fields for auditability)
     event_data = {
         "probe": "",
         "summary": summary,
@@ -846,10 +1220,26 @@ def prey8_yield(
         "perceive_nonce": perceive_nonce,
         "session_id": _session["session_id"],
         "ts": _now_iso(),
-        "artifacts_created": _split(artifacts_created),
-        "artifacts_modified": _split(artifacts_modified),
-        "next_steps": _split(next_steps),
-        "insights": _split(insights),
+        # Gate-enforced structured fields (P3 + P5)
+        "p3_delivery_manifest": delivery_list,
+        "p5_test_evidence": test_list,
+        "p5_mutation_confidence": mutation_confidence,
+        "p5_immunization_status": imm_status,
+        "p5_grudge_violations": grudge_list,
+        "sw4_completion_contract": {
+            "given": completion_given.strip(),
+            "when": completion_when.strip(),
+            "then": completion_then.strip(),
+        },
+        "gate": "YIELD",
+        "port_pair": "P3_INJECT + P5_IMMUNIZE",
+        "gate_passed": True,
+        # Legacy/compat fields
+        "artifacts_created": _split_csv(artifacts_created),
+        "artifacts_modified": _split_csv(artifacts_modified),
+        "next_steps": _split_csv(next_steps),
+        "insights": _split_csv(insights),
+        # Context
         "doc_count": doc_count,
         "event_count": event_count,
         "execute_steps": len(_session["execute_tokens"]),
@@ -858,7 +1248,7 @@ def prey8_yield(
         "server_version": SERVER_VERSION,
         # Full chain verification mosaic
         "chain_verification": {
-            "chain_length": len(_session["chain"]) + 1,  # +1 for this yield
+            "chain_length": len(_session["chain"]) + 1,
             "chain_hashes": chain_hashes,
             "chain_steps": chain_steps + ["YIELD"],
             "genesis_hash": "GENESIS",
@@ -869,6 +1259,8 @@ def prey8_yield(
             f"PREY8 mosaic complete. Session {_session['session_id']}. "
             f"Perceive nonce: {perceive_nonce}. "
             f"Chain: {len(_session['chain']) + 1} tiles. "
+            f"Mutation confidence: {mutation_confidence}%. "
+            f"Immunization: {imm_status}. "
             f"Summary: {summary}"
         ),
     }
@@ -896,6 +1288,32 @@ def prey8_yield(
         "stigmergy_row_id": row_id,
         "chain_position": len(_session["chain"]),
         "execute_steps_logged": len(_session["execute_tokens"]),
+        "gate_receipt": {
+            "gate": "YIELD",
+            "port_pair": "P3_INJECT + P5_IMMUNIZE",
+            "passed": True,
+            "delivery_items": len(delivery_list),
+            "test_items": len(test_list),
+            "mutation_confidence": mutation_confidence,
+            "immunization_status": imm_status,
+            "grudge_violations": len(grudge_list),
+        },
+        "stryker_receipt": {
+            "mutation_confidence": mutation_confidence,
+            "immunization_status": imm_status,
+            "test_evidence": test_list,
+            "grudge_violations": grudge_list,
+            "assessment": (
+                "FULL CONFIDENCE" if mutation_confidence >= 80 and imm_status == "PASSED"
+                else "MODERATE CONFIDENCE" if mutation_confidence >= 50
+                else "LOW CONFIDENCE — consider more testing"
+            ),
+        },
+        "sw4_completion_contract": {
+            "given": completion_given.strip(),
+            "when": completion_when.strip(),
+            "then": completion_then.strip(),
+        },
         "chain_verification": {
             "total_tiles": len(_session["chain"]) + 1,
             "chain_intact": True,
@@ -903,13 +1321,18 @@ def prey8_yield(
                 {"step": t["step"], "hash": t["chain_hash"][:16] + "..."}
                 for t in _session["chain"]
             ] + [{"step": "YIELD", "hash": c_hash[:16] + "..."}],
+            "all_gates_passed": [
+                t["step"] for t in _session["chain"]
+            ] + ["YIELD"],
         },
-        "sw4_completion_contract": {
-            "given": f"Session {_session['session_id']} opened with perceive nonce {perceive_nonce}",
-            "when": f"Agent executed {len(_session['execute_tokens'])} steps through hash-chained mosaic",
-            "then": f"Yield nonce {nonce} closed loop. Chain: {c_hash[:16]}... Summary: {summary}",
-        },
-        "instruction": "MOSAIC COMPLETE. All tiles placed and hash-linked. Session persisted to SSOT.",
+        "instruction": (
+            f"MOSAIC COMPLETE [ALL GATES PASSED]. "
+            f"Session {_session['session_id']}. "
+            f"{len(_session['chain']) + 1} tiles, all hash-linked. "
+            f"Stryker confidence: {mutation_confidence}%. "
+            f"Immunization: {imm_status}. "
+            "Session persisted to SSOT."
+        ),
     }
 
     # Reset session
@@ -921,7 +1344,7 @@ def prey8_yield(
     _session["chain"] = []
     _session["started_at"] = None
 
-    # Clear persisted state (loop is closed, no recovery needed)
+    # Clear persisted state (loop closed, no recovery needed)
     _clear_session_file()
 
     return receipt
@@ -933,6 +1356,10 @@ def prey8_yield(
 def prey8_fts_search(query: str, limit: int = 10) -> list:
     """
     Full-text search against the SSOT documents (FTS5).
+    Available at any time (no session required).
+
+    Use this BEFORE prey8_perceive to gather P0 OBSERVE observations
+    and P6 ASSIMILATE memory references.
 
     Args:
         query: Search terms (supports FTS5 syntax: AND, OR, NOT, phrases "like this").
@@ -970,6 +1397,10 @@ def prey8_fts_search(query: str, limit: int = 10) -> list:
 def prey8_read_document(doc_id: int) -> dict:
     """
     Read a specific document from the SSOT by ID.
+    Available at any time (no session required).
+
+    Use this BEFORE prey8_perceive to build P6 ASSIMILATE memory references.
+    Pass the doc IDs you read as the memory_refs parameter to prey8_perceive.
 
     Args:
         doc_id: The document ID (from fts_search results).
@@ -1007,10 +1438,14 @@ def prey8_query_stigmergy(
 ) -> list:
     """
     Query stigmergy events from the SSOT.
+    Available at any time (no session required).
+
+    Use this BEFORE prey8_perceive to gather stigmergy_digest data.
 
     Args:
         event_type_pattern: SQL LIKE pattern for event_type (default: % = all).
-            Examples: '%yield%', '%perceive%', '%p4%', '%memory_loss%', '%tamper%'
+            Examples: '%yield%', '%perceive%', '%p4%', '%memory_loss%', '%tamper%',
+            '%gate_blocked%'
         limit: Max results (default 10, max 50).
 
     Returns:
@@ -1069,9 +1504,11 @@ def prey8_ssot_stats() -> dict:
         memory_loss_count = conn.execute(
             "SELECT COUNT(*) FROM stigmergy_events WHERE event_type LIKE '%memory_loss%'"
         ).fetchone()[0]
-
         tamper_alert_count = conn.execute(
             "SELECT COUNT(*) FROM stigmergy_events WHERE event_type LIKE '%tamper_alert%'"
+        ).fetchone()[0]
+        gate_blocked_count = conn.execute(
+            "SELECT COUNT(*) FROM stigmergy_events WHERE event_type LIKE '%gate_blocked%'"
         ).fetchone()[0]
 
         return {
@@ -1084,6 +1521,7 @@ def prey8_ssot_stats() -> dict:
             "observability": {
                 "memory_loss_events": memory_loss_count,
                 "tamper_alerts": tamper_alert_count,
+                "gate_blocked_events": gate_blocked_count,
                 "server_version": SERVER_VERSION,
             },
             "current_session": {
@@ -1101,10 +1539,11 @@ def prey8_ssot_stats() -> dict:
 @mcp.tool()
 def prey8_session_status() -> dict:
     """
-    Get current PREY8 session status, flow state, and chain integrity.
+    Get current PREY8 session status, flow state, chain integrity,
+    and what gate fields are required for the next step.
 
     Returns:
-        Current phase, nonces, chain hashes, and what steps are available next.
+        Current phase, nonces, chain hashes, next step requirements.
     """
     phase = _session["phase"]
     available_next = {
@@ -1112,6 +1551,32 @@ def prey8_session_status() -> dict:
         "perceived": ["prey8_react"],
         "reacted": ["prey8_execute", "prey8_yield"],
         "executing": ["prey8_execute", "prey8_yield"],
+    }
+
+    # Show what fields are required for the next gate
+    next_gate_fields = {
+        "idle": {
+            "gate": "PERCEIVE (P0+P6)",
+            "required": GATE_SPECS["PERCEIVE"]["required_fields"],
+            "hint": "Use prey8_fts_search and prey8_read_document FIRST, then call prey8_perceive",
+        },
+        "perceived": {
+            "gate": "REACT (P1+P7)",
+            "required": GATE_SPECS["REACT"]["required_fields"],
+            "hint": "Supply shared_data_refs, navigation_intent, meadows_level(1-12), meadows_justification, sequential_plan",
+        },
+        "reacted": {
+            "gate": "EXECUTE (P2+P4) or YIELD (P3+P5)",
+            "execute_required": GATE_SPECS["EXECUTE"]["required_fields"],
+            "yield_required": GATE_SPECS["YIELD"]["required_fields"],
+            "hint": "Execute needs SBE spec + adversarial check + fail_closed_gate=true. Yield needs delivery + tests + Stryker + SW-4.",
+        },
+        "executing": {
+            "gate": "EXECUTE (P2+P4) or YIELD (P3+P5)",
+            "execute_required": GATE_SPECS["EXECUTE"]["required_fields"],
+            "yield_required": GATE_SPECS["YIELD"]["required_fields"],
+            "hint": "Continue executing or close with yield.",
+        },
     }
 
     chain_summary = []
@@ -1132,8 +1597,10 @@ def prey8_session_status() -> dict:
         "chain_length": len(_session["chain"]),
         "chain_tiles": chain_summary,
         "available_next_tools": available_next.get(phase, []),
-        "flow": "GENESIS -> Perceive -> React -> Execute* -> Yield",
+        "next_gate": next_gate_fields.get(phase, {}),
+        "flow": "GENESIS -> Perceive[P0+P6] -> React[P1+P7] -> Execute[P2+P4]* -> Yield[P3+P5]",
         "memory_loss_count_this_session": _session["memory_loss_count"],
+        "gate_architecture": "fail-closed: missing fields = GATE_BLOCKED = bricked agent",
     }
 
 
@@ -1145,16 +1612,12 @@ def prey8_validate_chain(session_id: str = "") -> dict:
     Reads all PREY8 events for the given session (or current session)
     from SSOT and verifies the chain_hash linkage is intact.
 
-    Each tile in the mosaic must reference the previous tile's chain_hash.
-    A broken link means tampering or data corruption.
-
     Args:
         session_id: Session ID to validate (empty = current session).
 
     Returns:
-        dict with: chain_valid, tiles_found, broken_links, diagnostics
+        dict with: chain_valid, tiles_found, broken_links, gate_receipts
     """
-    # If no session_id, use current in-memory chain
     if not session_id:
         if _session["session_id"]:
             chain = _session["chain"]
@@ -1213,6 +1676,8 @@ def prey8_validate_chain(session_id: str = "") -> dict:
                     "parent_chain_hash": data.get("parent_chain_hash", ""),
                     "chain_position": data.get("chain_position", -1),
                     "step": row[1].split(".")[-1].upper(),
+                    "gate_passed": data.get("gate_passed", None),
+                    "gate": data.get("gate", None),
                 })
             except (json.JSONDecodeError, TypeError):
                 pass
@@ -1220,7 +1685,6 @@ def prey8_validate_chain(session_id: str = "") -> dict:
         if not events:
             return {"chain_valid": False, "error": f"No events found for session {session_id}"}
 
-        # Verify chain linkage
         broken = []
         for i, evt in enumerate(events):
             if i == 0:
@@ -1242,7 +1706,12 @@ def prey8_validate_chain(session_id: str = "") -> dict:
             "session_id": session_id,
             "tiles_found": len(events),
             "tiles": [
-                {"step": e["step"], "hash": (e["chain_hash"][:16] + "...") if e["chain_hash"] else "?"}
+                {
+                    "step": e["step"],
+                    "hash": (e["chain_hash"][:16] + "...") if e["chain_hash"] else "?",
+                    "gate": e.get("gate"),
+                    "gate_passed": e.get("gate_passed"),
+                }
                 for e in events
             ],
             "broken_links": broken,
@@ -1255,25 +1724,24 @@ def prey8_validate_chain(session_id: str = "") -> dict:
 @mcp.tool()
 def prey8_detect_memory_loss() -> dict:
     """
-    Scan SSOT for memory loss events and orphaned sessions.
+    Scan SSOT for memory loss events, orphaned sessions, gate blocks, and tamper alerts.
 
     Returns diagnostic data about:
     - Unclosed perceive events (no matching yield)
     - Previously recorded memory_loss events
     - Tamper alerts
+    - Gate blocked events
     - Chain integrity issues
 
-    This is the observability dashboard for the hallucinatory LLM layer.
-    The architecture is correct by construction; this tool verifies it.
-
     Returns:
-        dict with: orphaned_sessions, memory_loss_events, tamper_alerts, health
+        dict with: orphaned_sessions, memory_loss_events, tamper_alerts,
+                   gate_blocked_events, health
     """
     orphans = _detect_memory_loss()
 
     conn = _get_conn()
     try:
-        # Get recorded memory loss events
+        # Memory loss events
         loss_events = []
         for row in conn.execute(
             """SELECT id, timestamp, data_json
@@ -1294,7 +1762,7 @@ def prey8_detect_memory_loss() -> dict:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Get tamper alerts
+        # Tamper alerts
         tamper_events = []
         for row in conn.execute(
             """SELECT id, timestamp, data_json
@@ -1313,19 +1781,47 @@ def prey8_detect_memory_loss() -> dict:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Overall health assessment
+        # Gate blocked events (new in v3)
+        gate_events = []
+        for row in conn.execute(
+            """SELECT id, timestamp, data_json
+               FROM stigmergy_events
+               WHERE event_type LIKE '%gate_blocked%'
+               ORDER BY timestamp DESC LIMIT 10"""
+        ):
+            try:
+                data = json.loads(row[2]).get("data", {})
+                gate_events.append({
+                    "id": row[0],
+                    "timestamp": row[1],
+                    "gate": data.get("gate", ""),
+                    "port_pair": data.get("port_pair", ""),
+                    "missing_fields": data.get("missing_fields", []),
+                    "empty_fields": data.get("empty_fields", []),
+                })
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Overall health
         total_perceives = conn.execute(
             "SELECT COUNT(*) FROM stigmergy_events WHERE event_type LIKE '%prey8.perceive%'"
         ).fetchone()[0]
         total_yields = conn.execute(
             "SELECT COUNT(*) FROM stigmergy_events WHERE event_type LIKE '%prey8.yield%'"
         ).fetchone()[0]
+        total_gate_blocks = conn.execute(
+            "SELECT COUNT(*) FROM stigmergy_events WHERE event_type LIKE '%gate_blocked%'"
+        ).fetchone()[0]
 
         health = "HEALTHY"
         if len(tamper_events) > 0:
             health = "ALERT -- tamper events detected"
+        elif total_gate_blocks > 10:
+            health = "DEGRADED -- excessive gate blocks (agent struggling with protocol)"
         elif len(orphans) > 3:
             health = "DEGRADED -- multiple unclosed sessions"
+        elif total_gate_blocks > 0:
+            health = "MINOR -- some gate blocks recorded (normal during learning)"
         elif len(orphans) > 0:
             health = "MINOR -- some unclosed sessions (normal for recent perceives)"
 
@@ -1337,10 +1833,20 @@ def prey8_detect_memory_loss() -> dict:
             "memory_loss_count": len(loss_events),
             "tamper_alerts": tamper_events,
             "tamper_count": len(tamper_events),
+            "gate_blocked_events": gate_events,
+            "gate_blocked_count": len(gate_events),
             "total_perceives": total_perceives,
             "total_yields": total_yields,
+            "total_gate_blocks": total_gate_blocks,
             "yield_ratio": f"{total_yields}/{total_perceives}" if total_perceives > 0 else "0/0",
             "current_server_losses": _session["memory_loss_count"],
+            "gate_specs": {
+                name: {
+                    "port_pair": spec["port_pair"],
+                    "required_fields": spec["required_fields"],
+                }
+                for name, spec in GATE_SPECS.items()
+            },
         }
     finally:
         conn.close()
