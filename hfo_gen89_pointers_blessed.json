@@ -72,6 +72,42 @@
     "octree.invariants": {
       "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/hfo_legendary_commanders_invariants.v1.json",
       "desc": "8-port octree invariants (locked fields)"
+    },
+    "prey8.perceive": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py",
+      "desc": "PREY8 session-start bookend (Perceive)"
+    },
+    "prey8.yield": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_yield.py",
+      "desc": "PREY8 session-end bookend (Yield)"
+    },
+    "prey8.mcp_server": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_prey8_mcp_server.py",
+      "desc": "PREY8 MCP server — structurally enforced P-R-E-Y loop (9 tools)"
+    },
+    "agent.p4_red_regnant": {
+      "path": ".github/agents/hfo_gen_89_p4_red_regent_bootstrap_v1.agent.md",
+      "desc": "P4 Red Regnant custom agent definition for VS Code Copilot"
+    },
+    "config.mcp_servers": {
+      "path": ".vscode/mcp.json",
+      "desc": "MCP server configuration (11 servers)"
+    },
+    "swarm.config": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_swarm_config.py",
+      "desc": "Ollama swarm configuration — models, API settings, clients"
+    },
+    "swarm.agents": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_swarm_agents.py",
+      "desc": "Swarm agent definitions — triage, research, coder, analyst"
+    },
+    "swarm.web_tools": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_web_tools.py",
+      "desc": "Web research tools — search, news, fetch for swarm agents"
+    },
+    "swarm.model_manager": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_model_manager.py",
+      "desc": "Ollama model manager — pull, list, tier-based loading"
     }
   }
 }

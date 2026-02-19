@@ -76,7 +76,10 @@ The root directory holds **only governance and PAL files**. Everything else live
 | `.env.example` | Environment template (committed) |
 | `.env` | Secrets + local config (gitignored) |
 | `.gitignore` | Git ignore rules |
+| `.gitattributes` | Git LFS tracking rules |
 | `.githooks/` | Git hooks directory |
+| `.github/` | GitHub agent modes + workflows |
+| `.vscode/` | VS Code settings + MCP config |
 | `hfo_gen89_pointers_blessed.json` | Blessed pointer registry |
 | `LICENSE` / `README.md` | Standard repo files (optional) |
 
@@ -118,6 +121,8 @@ python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py check
 | `pal.resolver` | `…/0_bronze/resources/hfo_pointers.py` | Pointer resolver |
 | `pal.precommit` | `.githooks/pre-commit` | Pre-commit hook |
 | `octree.invariants` | `…/2_gold/resources/…invariants.v1.json` | 8-port invariants |
+| `prey8.perceive` | `…/0_bronze/resources/hfo_perceive.py` | Session start bookend |
+| `prey8.yield` | `…/0_bronze/resources/hfo_yield.py` | Session end bookend |
 
 ### Adding New Pointers
 
@@ -151,6 +156,91 @@ The `.githooks/pre-commit` hook runs automatically on `git commit` and enforces:
 4. **Large file warnings** — Files > 10 MB flagged for Git LFS
 
 Setup: `git config core.hooksPath .githooks` (already configured)
+
+---
+
+## 4. PREY8 Bookends — Mandatory Session Protocol
+
+**ZERO EXCEPTIONS. Every agent interaction MUST call Perceive at start and Yield at end.**
+
+The PREY8 loop is the cognitive persistence mechanism inherited from Gen88 (257 perceive events, 944 Red Regnant events). It ensures no agent session is a dead-end — every interaction reads the trail and writes back to it.
+
+### The Loop
+
+```
+P — Perceive  (session start: query SSOT, read stigmergy, orient)
+R — React     (interpret context, form plan)
+E — Engage    (do the work)
+Y — Yield     (session end: write stigmergy, leave traces, close loop)
+```
+
+### Perceive (Session Start)
+
+```bash
+# Basic context snapshot — run this FIRST in every session
+python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py
+
+# With user intent for FTS search
+python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py --probe "user's question"
+
+# Machine-readable JSON
+python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py --json
+```
+
+**What it does:**
+1. Queries SSOT for document stats (9,859 docs, ~9M words)
+2. Gets latest 10 stigmergy events (what happened recently)
+3. Finds last perceive/yield pair (session continuity)
+4. Runs FTS5 search if probe is provided (relevant context)
+5. **Writes a `hfo.gen89.prey8.perceive` CloudEvent** to `stigmergy_events`
+6. Returns nonce for yield chain validation
+
+### Yield (Session End)
+
+```bash
+# Basic yield — run this LAST in every session
+python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_yield.py \
+  --summary "What was accomplished" \
+  --probe "Original user intent"
+
+# With artifacts and next steps
+python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_yield.py \
+  --summary "Built PREY8 bookend scripts" \
+  --probe "setup prey8 mandatory bookends" \
+  --artifacts-created "hfo_perceive.py,hfo_yield.py" \
+  --next "test full loop,add to AGENTS.md" \
+  --insights "CloudEvent structure from Gen88 exemplars"
+
+# Machine-readable JSON
+python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_yield.py --json -s "summary"
+```
+
+**What it does:**
+1. Finds the matching perceive nonce (chain validation)
+2. Records: summary, artifacts created/modified, next steps, insights
+3. **Writes a `hfo.gen89.prey8.yield` CloudEvent** to `stigmergy_events`
+4. Outputs SW-4 Completion Contract (Given/When/Then)
+
+### Pointer Keys
+
+| Key | Target | Description |
+|-----|--------|-------------|
+| `prey8.perceive` | `…/0_bronze/resources/hfo_perceive.py` | Session start bookend |
+| `prey8.yield` | `…/0_bronze/resources/hfo_yield.py` | Session end bookend |
+
+### Why This Is Mandatory
+
+- **Cognitive persistence**: Agent sessions vanish without warning. The stigmergy trail is the only thing that survives.
+- **Nonce chain**: Each perceive generates a nonce; yield references it. Broken chains = lost sessions.
+- **Stigmergy**: "All text is stigmergy" (Gen88 insight). Every session leaves pheromones for future agents.
+- **SSOT integrity**: The database grows with every interaction. No dead-end sessions.
+
+### Enforcement
+
+If an agent does NOT run perceive/yield:
+1. The next agent's perceive will show a gap in the stigmergy trail
+2. The operator will see missing nonce chains
+3. The session's work is **not recorded** — it's as if it never happened
 
 ---
 

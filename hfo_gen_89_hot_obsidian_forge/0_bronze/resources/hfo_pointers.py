@@ -95,8 +95,8 @@ def cmd_list(root, pointers, args):
     for key, entry in sorted(pointers.items()):
         desc = entry.get("desc", "") if isinstance(entry, dict) else ""
         rel = entry["path"] if isinstance(entry, dict) else entry
-        exists = "✓" if (root / rel).exists() else "✗"
-        print(f"  {exists} {key:{max_key}}  →  {rel}")
+        exists = "[OK]" if (root / rel).exists() else "[!!]"
+        print(f"  {exists} {key:{max_key}}  ->  {rel}")
         if desc:
             print(f"    {'':>{max_key}}     {desc}")
 
@@ -107,9 +107,9 @@ def cmd_check(root, pointers, args):
         rel = entry["path"] if isinstance(entry, dict) else entry
         full = root / rel
         if full.exists():
-            print(f"  ✓ {key} → {rel}")
+            print(f"  [OK] {key} -> {rel}")
         else:
-            print(f"  ✗ {key} → {rel}  [MISSING]")
+            print(f"  [!!] {key} -> {rel}  [MISSING]")
             errors += 1
     if errors:
         print(f"\n{errors} pointer(s) unresolved.")

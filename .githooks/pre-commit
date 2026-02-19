@@ -15,7 +15,7 @@ echo "═══ HFO Gen89 Pre-Commit Gate ═══"
 
 # ── 1. Root Cleanliness ──────────────────────────────────────
 # Only allowed root files (no deep forge stuff leaking to root)
-ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.githooks|hfo_gen89_pointers_blessed\.json|hfo_gen_89_hot_obsidian_forge|LICENSE|README\.md|\.git"
+ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.gitattributes|\.githooks|\.github|\.vscode|hfo_gen89_pointers_blessed\.json|hfo_gen_89_hot_obsidian_forge|LICENSE|README\.md|\.git"
 
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 
@@ -50,7 +50,28 @@ for f in $STAGED_FILES; do
 done
 
 if [ $ERRORS -eq 0 ]; then
-    echo "${GREEN}✓${NC} No secrets staged"
+    echo "${GREEN}✓${NC} No secret filenames staged"
+fi
+
+# ── 2b. Content Scanning for Secrets ─────────────────────────
+# Scan staged file contents for hardcoded API keys, tokens, passwords
+CONTENT_SECRET_PATTERNS='(BRAVE_API_KEY|TAVILY_API_KEY|GITHUB_PERSONAL_ACCESS_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|HFO_SECRET|api[_-]?key|secret[_-]?key|access[_-]?token|Bearer [A-Za-z0-9_\-\.]+)\s*[=:]\s*["'\'']*[A-Za-z0-9_\-\.]{16,}'
+
+for f in $STAGED_FILES; do
+    # Only scan text files, skip binaries and .env.example
+    if [ "$f" = ".env.example" ]; then continue; fi
+    if [ -f "$f" ]; then
+        CONTENT=$(git diff --cached --diff-filter=ACM -p -- "$f" 2>/dev/null | grep '^+' | grep -v '^+++' || true)
+        if echo "$CONTENT" | grep -qiE "$CONTENT_SECRET_PATTERNS"; then
+            echo "${RED}✗ SECRET IN CONTENT:${NC} $f contains what looks like a hardcoded secret/API key"
+            echo "  Use environment variables or .env (gitignored) instead of committing secrets."
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+done
+
+if [ $ERRORS -eq 0 ]; then
+    echo "${GREEN}✓${NC} No secrets in file contents"
 fi
 
 # ── 3. Medallion Boundary ────────────────────────────────────
