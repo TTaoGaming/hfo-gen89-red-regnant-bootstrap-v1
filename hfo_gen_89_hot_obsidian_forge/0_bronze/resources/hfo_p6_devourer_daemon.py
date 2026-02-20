@@ -686,9 +686,11 @@ Respond with ONLY a JSON object:
     if parsed and parsed.get("L1_BLUF"):
         # Also set the flat "bluf" key for backward compat with D5
         parsed["bluf"] = parsed["L1_BLUF"]
+        print(f"[D1] Parsed JSON: L1={len(parsed.get('L1_BLUF',''))}, L2={len(parsed.get('L2_SECTIONS',[]))}, L3={len(parsed.get('L3_CONCEPTS',[]))}")
         return parsed, metrics
     # Fallback: treat entire response as a flat BLUF
     bluf_text = resp.strip() if resp else ""
+    print(f"[D1] Fallback: response_len={len(resp) if resp else 0}, parsed={parsed}, bluf_text_len={len(bluf_text)}")
     return {
         "bluf": bluf_text,
         "L1_BLUF": bluf_text,

@@ -35,6 +35,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Import canonical write
+try:
+    from hfo_ssot_write import write_stigmergy_event, build_signal_metadata
+except ImportError:
+    sys.path.append(str(Path(__file__).resolve().parent))
+    from hfo_ssot_write import write_stigmergy_event, build_signal_metadata
+
 # ─── PATH RESOLUTION (PAL) ────────────────────────────────────────
 def _find_root() -> Path:
     for anchor in [Path.cwd(), Path(__file__).resolve().parent]:
@@ -81,35 +88,6 @@ def get_db_rw() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
-
-def emit_stigmergy(conn: sqlite3.Connection, event_type: str, subject: str, data: dict) -> int:
-    event_id = uuid.uuid4().hex
-    now = datetime.now(timezone.utc).isoformat()
-    
-    payload = {
-        "specversion": "1.0",
-        "id": event_id,
-        "type": event_type,
-        "source": f"{DAEMON_NAME}_v{DAEMON_VERSION}",
-        "subject": subject,
-        "time": now,
-        "datacontenttype": "application/json",
-        "data": data
-    }
-    
-    data_json = json.dumps(payload)
-    content_hash = hashlib.sha256(data_json.encode("utf-8")).hexdigest()
-    
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO stigmergy_events (event_type, timestamp, subject, source, data_json, content_hash)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (event_type, now, subject, payload["source"], data_json, content_hash)
-    )
-    conn.commit()
-    return cursor.lastrowid
 
 # ─── GITOPS LOGIC ─────────────────────────────────────────────────
 class GitOpsDaemon:
@@ -246,9 +224,19 @@ class GitOpsDaemon:
 
         # Emit success stigmergy
         try:
-            conn = get_db_rw()
-            emit_stigmergy(conn, EVENT_TYPE_GITOPS, "gitops-sync", report)
-            conn.close()
+            sig = build_signal_metadata(
+                port=DAEMON_PORT,
+                model_id="gitops",
+                daemon_name=DAEMON_NAME,
+                daemon_version=DAEMON_VERSION,
+                model_provider="system"
+            )
+            write_stigmergy_event(
+                EVENT_TYPE_GITOPS,
+                "gitops-sync",
+                report,
+                sig
+            )
         except Exception as e:
             print(f"  [!] Failed to emit stigmergy: {e}")
 
@@ -256,9 +244,19 @@ class GitOpsDaemon:
 
     def _emit_error(self, report: dict):
         try:
-            conn = get_db_rw()
-            emit_stigmergy(conn, EVENT_TYPE_ERROR, "gitops-error", report)
-            conn.close()
+            sig = build_signal_metadata(
+                port=DAEMON_PORT,
+                model_id="gitops",
+                daemon_name=DAEMON_NAME,
+                daemon_version=DAEMON_VERSION,
+                model_provider="system"
+            )
+            write_stigmergy_event(
+                EVENT_TYPE_ERROR,
+                "gitops-error",
+                report,
+                sig
+            )
         except Exception as e:
             print(f"  [!] Failed to emit error stigmergy: {e}")
 
