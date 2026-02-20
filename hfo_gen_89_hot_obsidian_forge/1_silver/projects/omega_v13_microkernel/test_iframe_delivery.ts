@@ -35,13 +35,13 @@ const mockElement = {
 };
 
 // Mock window.addEventListener and window.removeEventListener
-const listeners: { [key: string]: Function[] } = {};
+const listeners: { [key: string]: ((...args: unknown[]) => void)[] } = {};
 (global as any).window = {
-    addEventListener: (type: string, listener: Function) => {
+    addEventListener: (type: string, listener: (...args: unknown[]) => void) => {
         if (!listeners[type]) listeners[type] = [];
         listeners[type].push(listener);
     },
-    removeEventListener: (type: string, listener: Function) => {
+    removeEventListener: (type: string, listener: (...args: unknown[]) => void) => {
         if (listeners[type]) {
             listeners[type] = listeners[type].filter(l => l !== listener);
         }

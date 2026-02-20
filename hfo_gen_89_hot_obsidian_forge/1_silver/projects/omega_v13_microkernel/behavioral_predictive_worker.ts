@@ -30,8 +30,8 @@ function simulatePrediction(data: Float32Array, genotype: Genotype): Float32Arra
     let errorCovariance = 1.0;
 
     for (let i = 0; i < data.length; i++) {
-        let predictedEstimate = estimate;
-        let predictedErrorCovariance = errorCovariance + genotype.kalmanQ;
+        const predictedEstimate = estimate;
+        const predictedErrorCovariance = errorCovariance + genotype.kalmanQ;
 
         const kalmanGain = predictedErrorCovariance / (predictedErrorCovariance + genotype.kalmanR);
         estimate = predictedEstimate + kalmanGain * (data[i] - predictedEstimate);

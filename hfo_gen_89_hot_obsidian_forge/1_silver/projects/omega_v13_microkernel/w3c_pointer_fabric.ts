@@ -197,8 +197,8 @@ export class W3CPointerFabric implements Plugin {
         const screenWidth  = this.context?.pal?.resolve<number>('ScreenWidth')  ?? window.innerWidth;
         const screenHeight = this.context?.pal?.resolve<number>('ScreenHeight') ?? window.innerHeight;
 
-        let finalX = Math.max(0, Math.min(screenWidth - 1, predicted.x));
-        let finalY = Math.max(0, Math.min(screenHeight - 1, predicted.y));
+        const finalX = Math.max(0, Math.min(screenWidth - 1, predicted.x));
+        const finalY = Math.max(0, Math.min(screenHeight - 1, predicted.y));
 
         // Generate predicted events array for the coasting state
         const predictedEvents: { x: number, y: number, time: number }[] = [];

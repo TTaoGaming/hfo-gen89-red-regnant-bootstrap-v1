@@ -34,7 +34,7 @@ import { SymbioteInjectorPlugin } from './symbiote_injector_plugin';
  */
 function tryRequire(modulePath: string): any {
     try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
+         
         return require(modulePath);
     } catch {
         return null;

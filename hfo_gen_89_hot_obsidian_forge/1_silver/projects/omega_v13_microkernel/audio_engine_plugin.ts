@@ -25,7 +25,7 @@ export class AudioEnginePlugin implements Plugin {
     private async onAudioUnlock() {
         if (!this.audioContext) {
             try {
-                this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+                this.audioContext = new AudioContext();
                 await this.loadSounds();
                 console.log('[AudioEngine] AudioContext instantiated and unlocked');
             } catch (e) {

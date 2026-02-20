@@ -6,7 +6,7 @@
     "serve": "npx serve . --port 5173 --no-clipboard",
     "dev": "npx concurrently \"npm run watch:demo2\" \"npm run serve\"",
     "lint": "eslint .",
-    "test:zod": "ts-node test_zod.ts"
+    "test:zod": "npx tsx test_zod.ts"
   },
   "devDependencies": {
     "@babylonjs/core": "^8.52.0",
@@ -21,6 +21,7 @@
     "eslint-plugin-import": "^2.32.0",
     "jest": "^30.2.0",
     "ts-jest": "^29.4.6",
+    "tsx": "^4.21.0",
     "typescript-eslint": "^8.56.0"
   },
   "dependencies": {

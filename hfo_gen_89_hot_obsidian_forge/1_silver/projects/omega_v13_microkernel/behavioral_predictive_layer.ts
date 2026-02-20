@@ -102,8 +102,8 @@ export class BehavioralPredictiveLayer {
 
         for (let i = 0; i < data.length; i++) {
             // 1. Predict (simplified)
-            let predictedEstimate = estimate;
-            let predictedErrorCovariance = errorCovariance + genotype.kalmanQ;
+            const predictedEstimate = estimate;
+            const predictedErrorCovariance = errorCovariance + genotype.kalmanQ;
 
             // 2. Update
             const kalmanGain = predictedErrorCovariance / (predictedErrorCovariance + genotype.kalmanR);

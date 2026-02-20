@@ -57,6 +57,6 @@ export class SymbioteInjectorPlugin implements Plugin {
                 handId: handId
             }
         });
-        window.dispatchEvent(event);
+        dispatchEvent(event);
     }
 }
