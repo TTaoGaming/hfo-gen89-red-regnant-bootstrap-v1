@@ -232,6 +232,26 @@
     "map_elite.commanders": {
       "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_map_elite_commanders.py",
       "desc": "MAP-Elite Port Commander Framework v1.0: 8 ports × 3 tiers (intelligence/speed/cost), ACO pheromone engine, scatter-gather coordinator, standardized signal_metadata schema, apex_invoke for any port+tier"
+    },
+    "ssot.write": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_ssot_write.py",
+      "desc": "Canonical stigmergy write function — structural enforcement of signal_metadata, CHECK trigger, compute_route, embed_queue migrations"
+    },
+    "fleet.lock": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_fleet_lock.py",
+      "desc": "PID lockfile fleet single-instance enforcement — OS-level file lock (msvcrt/fcntl), prevents zombie daemons"
+    },
+    "spec.structural_enforcement": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_structural_enforcement.feature",
+      "desc": "Gherkin SBE/ATDD specs for structural enforcement — 5 features, ~27 scenarios, written BEFORE code"
+    },
+    "supervisor.p7": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p7_supervisor.py",
+      "desc": "P7 Spider Sovereign Process Supervisor — 90s heartbeat, all 8+1 daemons, restart with backoff/cooldown, strange loop trending, MTBF tracking"
+    },
+    "supervisor.p5": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p5_supervisor.py",
+      "desc": "P5 Pyre Praetorian Lifecycle & Defense Supervisor — 7 anomaly detectors (D1-D7), defense score 0-100, trend analysis, recommendations"
     }
   }
 }

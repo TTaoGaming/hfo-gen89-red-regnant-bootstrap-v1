@@ -17,7 +17,7 @@ bluf: "Root SSOT nav for Gen89. 9,859 docs, 9,590 stigmergy events, ~9M words, ~
 
 ## 1. What This Is
 
-**HFO (Hybrid Forge Octree)** is a structured knowledge system and AI-human collaboration framework. This workspace contains **Gen89** — a clean dev environment bootstrapped from the consolidated SSOT database.
+**HFO (Hive Fleet Obsidian)** is a structured knowledge system and AI-human collaboration framework. This workspace contains **Gen89** — a clean dev environment bootstrapped from the consolidated SSOT database.
 
 | Fact | Value |
 |------|-------|
@@ -452,6 +452,21 @@ See §3 for the full pointer key table and environment variables.
 - The `metadata_json` column preserves original frontmatter losslessly.
 - Stigmergy events are CloudEvent-structured with content-hash deduplication.
 - The `lineage` table exists but is unpopulated — ready for dependency graph construction.
+
+---
+
+## 14. Active Projects
+
+### Omega v13 Microkernel
+**Status:** Ready to Ship
+**Location:** `hfo_gen_89_hot_obsidian_forge/1_silver/projects/omega_v13_microkernel/`
+**Description:** A strict I/O Sandbox (Host vs. Guest) gesture substrate. The Host handles the camera, MediaPipe, and gesture invariants. The Guest receives a highly constrained, Zod-validated stream of W3C Pointer events.
+**Key Features:**
+- **W3C Pointer Fabric:** Shared data fabric for decoupled components.
+- **Defense-in-Depth FSM:** Strict state machine for gesture transitions.
+- **Audio Engine:** Synthesized Cherry MX mechanical keyboard sounds for state transitions (READY -> COMMIT_POINTER -> READY/IDLE).
+- **Visualization:** Dot/ring visualization of state changes per hand.
+- **Behavioral Predictive Layer:** Hyper-heuristic GA for predicting user movement.
 
 ---
 

@@ -121,7 +121,7 @@ OLLAMA_BASE = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 DAEMON_NAME = "P6 Kraken Strange Loop"
 DAEMON_VERSION = "1.0"
 SOURCE_TAG = f"hfo_p6_kraken_loop_gen{GEN}"
-DEFAULT_MODEL = "gemma3:4b"
+DEFAULT_MODEL = os.getenv("HFO_P6_KRAKEN_MODEL", "gemma3:4b")
 DEFAULT_INTERVAL = 60.0  # seconds between cycles
 HEALTH_EVERY_N = 10  # health snapshot every N cycles
 

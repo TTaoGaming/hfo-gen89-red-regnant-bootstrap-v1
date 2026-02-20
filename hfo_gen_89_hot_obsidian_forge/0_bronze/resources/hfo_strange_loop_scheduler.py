@@ -674,7 +674,7 @@ def preload_gpu_models() -> dict:
         return {"status": "ALREADY_LOADED", "models": loaded}
     
     # Preload the Singer/Dancer model to keep VRAM warm
-    target_model = "qwen2.5:3b"  # Small, fast, always needed
+    target_model = os.getenv("HFO_WARM_MODEL", "qwen2.5:3b")  # Small, fast, always needed
     try:
         import urllib.request
         req = urllib.request.Request(

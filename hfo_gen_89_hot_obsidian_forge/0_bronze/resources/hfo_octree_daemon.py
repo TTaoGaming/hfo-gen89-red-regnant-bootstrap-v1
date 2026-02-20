@@ -968,6 +968,8 @@ def main():
                         help="Show NATARAJA dance assessment")
     parser.add_argument("--model-override", type=str, default=None,
                         help="Override model for all ports (e.g., qwen2.5:3b)")
+    parser.add_argument("--daemon", action="store_true",
+                        help="Headless daemon mode — sleep loop instead of interactive prompt (used by fleet launcher)")
 
     args = parser.parse_args()
 
@@ -1019,52 +1021,58 @@ def main():
         "models": {pid: supervisor.daemons[pid].config.model for pid in port_ids},
     })
 
-    # Interactive monitoring loop
-    print("  Daemons running. Commands: status | nataraja | quit")
-    print("  (Daemons will advise in background every 30-120 seconds)\n")
-
+    # Interactive monitoring loop (or headless sleep loop when launched by fleet)
     try:
-        while True:
-            try:
-                cmd = input("  > ").strip().lower()
-            except EOFError:
-                break
+        if not args.daemon:
+            print("  Daemons running. Commands: status | nataraja | quit")
+            print("  (Daemons will advise in background every 30-120 seconds)\n")
 
-            if cmd in ("quit", "exit", "q"):
-                break
-            elif cmd == "status":
-                supervisor.print_status()
-            elif cmd == "nataraja":
-                if supervisor.nataraja:
-                    assessment = supervisor.nataraja.assess()
-                    print(f"\n  ☳☲ NATARAJA DANCE STATUS")
-                    print(f"  Score: {assessment['nataraja_score']:.4f}")
-                    print(f"  {assessment['assessment']}\n")
-                else:
-                    print("  NATARAJA not active (need P4 + P5)\n")
-            elif cmd.startswith("ask "):
-                # Direct query to a specific port
-                parts = cmd.split(" ", 2)
-                if len(parts) >= 3:
-                    port_id = parts[1].upper()
-                    question = parts[2]
-                    if port_id in supervisor.daemons:
-                        daemon = supervisor.daemons[port_id]
-                        print(f"  Asking {daemon.config.commander}...")
-                        result = ollama_generate(
-                            daemon.config.model, question,
-                            system=daemon.persona, timeout=120,
-                        )
-                        print(f"\n  [{port_id}:{daemon.config.commander}]")
-                        print(f"  {result.get('response', 'No response')}\n")
+            while True:
+                try:
+                    cmd = input("  > ").strip().lower()
+                except EOFError:
+                    break
+
+                if cmd in ("quit", "exit", "q"):
+                    break
+                elif cmd == "status":
+                    supervisor.print_status()
+                elif cmd == "nataraja":
+                    if supervisor.nataraja:
+                        assessment = supervisor.nataraja.assess()
+                        print(f"\n  ☳☲ NATARAJA DANCE STATUS")
+                        print(f"  Score: {assessment['nataraja_score']:.4f}")
+                        print(f"  {assessment['assessment']}\n")
                     else:
-                        print(f"  Unknown port: {port_id}\n")
+                        print("  NATARAJA not active (need P4 + P5)\n")
+                elif cmd.startswith("ask "):
+                    # Direct query to a specific port
+                    parts = cmd.split(" ", 2)
+                    if len(parts) >= 3:
+                        port_id = parts[1].upper()
+                        question = parts[2]
+                        if port_id in supervisor.daemons:
+                            daemon = supervisor.daemons[port_id]
+                            print(f"  Asking {daemon.config.commander}...")
+                            result = ollama_generate(
+                                daemon.config.model, question,
+                                system=daemon.persona, timeout=120,
+                            )
+                            print(f"\n  [{port_id}:{daemon.config.commander}]")
+                            print(f"  {result.get('response', 'No response')}\n")
+                        else:
+                            print(f"  Unknown port: {port_id}\n")
+                    else:
+                        print("  Usage: ask P4 <question>\n")
+                elif cmd == "help":
+                    print("  Commands: status | nataraja | ask P4 <question> | quit\n")
                 else:
-                    print("  Usage: ask P4 <question>\n")
-            elif cmd == "help":
-                print("  Commands: status | nataraja | ask P4 <question> | quit\n")
-            else:
-                print("  Unknown command. Try: status, nataraja, ask P4 <question>, quit\n")
+                    print("  Unknown command. Try: status, nataraja, ask P4 <question>, quit\n")
+        else:
+            # Headless mode: launched by fleet with no TTY — just sleep until killed
+            print("  Daemons running in headless mode (no TTY). Kill PID to stop.")
+            while True:
+                time.sleep(60)
 
     except KeyboardInterrupt:
         pass

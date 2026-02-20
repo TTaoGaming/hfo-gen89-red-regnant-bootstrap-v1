@@ -124,9 +124,9 @@ SOURCE_TAG = f"hfo_p6_devourer_gen{GEN}"
 # HEAVY: Deep analysis (D1 DISCOVER, D3 DEFINE) — reasoning, quality
 # The Devourer's philosophy: use the right model for each task.
 # Classification doesn't need reasoning tokens. BLUFs do.
-LIGHT_MODEL = "gemma3:4b"           # ~3.3 GB VRAM, fast JSON output
-HEAVY_MODEL = "qwen3:8b"            # ~5.2 GB VRAM, strong reasoning
-FALLBACK_MODEL = "qwen2.5:3b"       # ~1.9 GB VRAM, emergency fallback
+LIGHT_MODEL = os.getenv("HFO_P6_LIGHT_MODEL", "gemma3:4b")           # ~3.3 GB VRAM, fast JSON output
+HEAVY_MODEL = os.getenv("HFO_P6_HEAVY_MODEL", "qwen3:8b")            # ~5.2 GB VRAM, strong reasoning
+FALLBACK_MODEL = os.getenv("HFO_P6_FALLBACK_MODEL", "qwen2.5:3b")       # ~1.9 GB VRAM, emergency fallback
 
 # Model catalog for compute-aware selection
 OLLAMA_MODEL_TIERS = {

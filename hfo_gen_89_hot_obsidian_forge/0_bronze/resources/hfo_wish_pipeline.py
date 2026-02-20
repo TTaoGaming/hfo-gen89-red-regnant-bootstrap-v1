@@ -152,7 +152,7 @@ IDENTITY = {
 # AI configuration
 DEEP_THINK_TIER   = "apex"           # gemini-3.1-pro-preview
 FAST_TIER         = "flash"          # gemini-2.5-flash (free)
-OLLAMA_MODEL      = "gemma3:4b"      # local GPU adversarial
+OLLAMA_MODEL      = os.getenv("HFO_P7_WISH_MODEL", "gemma3:4b")      # local GPU adversarial
 OLLAMA_URL        = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 MAX_CANDIDATES    = 3                # MAP-ELITE candidate count

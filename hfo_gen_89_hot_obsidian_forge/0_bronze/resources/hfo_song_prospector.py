@@ -348,7 +348,7 @@ def _strip_think_tags(text: str) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 PROSPECTOR_SYSTEM = """You are the Song Prospector — a creative intelligence that reads documents
-from a knowledge system called HFO (Hybrid Forge Octree) and identifies patterns
+from a knowledge system called HFO (Hive Fleet Obsidian) and identifies patterns
 that could become SONGS.
 
 HFO has two kinds of songs:

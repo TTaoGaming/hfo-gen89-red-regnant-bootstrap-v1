@@ -127,9 +127,9 @@ FLEET: list[DaemonSpec] = [
         port="P0",
         tier="free",
         provider="ollama",
-        model="granite4:3b (IBM Granite — fast 3B)",
-        args=["--ports", "P0", "--interval", "120", "--model-override", "granite4:3b"],
-        interval_note="120s tremorsense",
+        model=os.getenv("HFO_P0_MODEL", "granite4:3b"),
+        args=["--ports", "P0", "--model-override", os.getenv("HFO_P0_MODEL", "granite4:3b"), "--daemon"],
+        interval_note="Octree swarm supervisor — manages its own intervals internally",
         requires_ollama=True,
         description="P0 Lidless Legion — Octree health sensing + system tremorsense",
     ),
@@ -142,9 +142,9 @@ FLEET: list[DaemonSpec] = [
         tier="free",
         provider="gemini_free",
         model="gemini-3-flash-preview (Google Flash 3)",
-        args=["--tasks", "research", "--research-interval", "300",
+        args=["--tasks", "research", "--research-interval", "3000",
               "--model-tier", "frontier_flash"],
-        interval_note="5min web research (Gemini 3 Flash)",
+        interval_note="50min web research (Gemini 3 Flash)",
         requires_gemini=True,
         description="P1 Web Weaver — Web-grounded research bridging external data to SSOT",
     ),
@@ -156,10 +156,10 @@ FLEET: list[DaemonSpec] = [
         port="P2",
         tier="free",
         provider="ollama",
-        model="gemma3:4b (Google Gemma — fast 4B creation)",
-        args=["--tasks", "deep_analysis,codegen", "--deep-analysis-interval", "120",
-              "--codegen-interval", "180"],
-        interval_note="2-3min fast creation cycles",
+        model=os.getenv("HFO_P2_MODEL", "gemma3:4b"),
+        args=["--tasks", "deep_analysis,codegen", "--deep-analysis-interval", "1200",
+              "--codegen-interval", "1800", "--model-override", os.getenv("HFO_P2_MODEL", "gemma3:4b")],
+        interval_note="20-30min fast creation cycles",
         requires_ollama=True,
         description="P2 Mirror Magus — Fast creation + code generation using Gemma 4B",
     ),
@@ -171,12 +171,13 @@ FLEET: list[DaemonSpec] = [
         port="P3",
         tier="free",
         provider="ollama",
-        model="lfm2.5-thinking:1.2b (Liquid AI — ultra-fast 1.2B thinking)",
+        model=os.getenv("HFO_P3_MODEL", "lfm2.5-thinking:1.2b"),
         args=["--tasks", "enrich,port_assign,patrol",
-              "--enrich-interval", "60",
-              "--port-assign-interval", "45",
-              "--patrol-interval", "30"],
-        interval_note="30-60s ultra-fast delivery",
+              "--enrich-interval", "600",
+              "--port-assign-interval", "450",
+              "--patrol-interval", "300",
+              "--model-override", os.getenv("HFO_P3_MODEL", "lfm2.5-thinking:1.2b")],
+        interval_note="5-10min ultra-fast delivery",
         requires_ollama=True,
         description="P3 Harmonic Hydra — SSOT enrichment, port assignment, stigmergy patrol (Liquid AI)",
     ),
@@ -188,11 +189,11 @@ FLEET: list[DaemonSpec] = [
         port="P4",
         tier="free",
         provider="ollama",
-        model="phi4:14b (Microsoft Phi — deep adversarial reasoning)",
-        args=["--interval", "120", "--model", "phi4:14b"],
-        interval_note="120s deep adversarial (14B needs more time per cycle)",
+        model=os.getenv("HFO_P4_MODEL", "qwen2.5-coder:7b"),
+        args=["--interval", "600", "--model", os.getenv("HFO_P4_MODEL", "qwen2.5-coder:7b")],
+        interval_note="10min adversarial cycles (7B code-focused, matches DEFAULT_MODEL)",
         requires_ollama=True,
-        description="P4 Red Regnant — Strife (antipattern) + Splendor (pattern). BFT: ALWAYS DISSENTS. Phi4 14B for deep reasoning.",
+        description="P4 Red Regnant — Strife (antipattern) + Splendor (pattern). BFT: ALWAYS DISSENTS. Qwen 7B for code-focused adversarial.",
     ),
 
     # ── P5 IMMUNIZE — Pyre Praetorian (Dancer + Governance) ──
@@ -202,11 +203,11 @@ FLEET: list[DaemonSpec] = [
         port="P5",
         tier="free",
         provider="ollama",
-        model="qwen3:30b-a3b (Alibaba Qwen MoE — 30B params, 3B active)",
-        args=["--interval", "90", "--model", "qwen3:30b-a3b"],
-        interval_note="90s governance + MoE depth (30B knowledge, 3B active speed)",
+        model=os.getenv("HFO_P5_MODEL", "gemma3:4b"),
+        args=["--interval", "600", "--model", os.getenv("HFO_P5_MODEL", "gemma3:4b")],
+        interval_note="10min governance cycles (4B fast, matches DEFAULT_MODEL, already in VRAM)",
         requires_ollama=True,
-        description="P5 Pyre Praetorian — Death/Dawn + governance patrols. Qwen3 MoE for deep policy knowledge.",
+        description="P5 Pyre Praetorian — Death/Dawn + governance patrols. Gemma 4B for fast policy enforcement.",
     ),
 
     # ── P6 ASSIMILATE — Devourer (Deep Reasoning Knowledge Loop) ────────
@@ -218,9 +219,9 @@ FLEET: list[DaemonSpec] = [
         port="P6",
         tier="free",
         provider="ollama",
-        model="deepseek-r1:8b (DeepSeek — reasoning 8B knowledge extraction)",
-        args=["--interval", "60", "--batch", "2", "--model", "deepseek-r1:8b"],
-        interval_note="60s reasoning-loop, 2 docs/cycle (R1 chain-of-thought overhead)",
+        model=os.getenv("HFO_P6_MODEL", "deepseek-r1:8b"),
+        args=["--interval", "600", "--batch", "2", "--model", os.getenv("HFO_P6_MODEL", "deepseek-r1:8b")],
+        interval_note="10min reasoning-loop, 2 docs/cycle (R1 chain-of-thought overhead, compute_aware_model_select internal)",
         requires_ollama=True,
         description="P6 Devourer — 6D knowledge extraction with DeepSeek R1 reasoning for deeper analysis",
     ),
@@ -233,8 +234,8 @@ FLEET: list[DaemonSpec] = [
         tier="paid",
         provider="gemini_vertex",
         model="gemini-3.1-pro-preview (apex, Deep Think)",
-        args=["--interval", "1800", "--hours", "24"],
-        interval_note="30min strategic nav (Deep Think is expensive — quality > frequency)",
+        args=["--interval", "18000", "--hours", "24"],
+        interval_note="5 hours strategic nav (Deep Think is expensive — quality > frequency)",
         requires_vertex=True,
         description="P7 Spider Sovereign — Seals & Spheres, Meadows L1-L13, heuristic cartography",
     ),
@@ -252,11 +253,12 @@ AUXILIARY_FLEET: list[DaemonSpec] = [
         port="P6",
         tier="free",
         provider="ollama",
-        model="qwen2.5:3b (Alibaba Qwen — fast structured enrichment)",
+        model=os.getenv("HFO_P6_KRAKEN_MODEL", "qwen2.5:3b"),
         args=["--tasks", "bluf,port,doctype,lineage",
-              "--bluf-interval", "30", "--port-interval", "30",
-              "--doctype-interval", "60", "--lineage-interval", "120"],
-        interval_note="30-120s structured enrichment (aux, different family from Devourer)",
+              "--bluf-interval", "300", "--port-interval", "300",
+              "--doctype-interval", "600", "--lineage-interval", "1200",
+              "--model", os.getenv("HFO_P6_KRAKEN_MODEL", "qwen2.5:3b")],
+        interval_note="5-20min structured enrichment (aux, different family from Devourer)",
         requires_ollama=True,
         description="P6 Kraken Keeper (aux) — structured enrichment with Qwen 3B (cross-family with DeepSeek R1 Devourer)",
     ),
@@ -457,6 +459,14 @@ def launch_daemon(spec: DaemonSpec, dry_run: bool = False) -> Optional[int]:
         return 0
     
     try:
+        # v3 fix: Force UTF-8 encoding on Windows to prevent UnicodeEncodeError
+        # on daemon print() calls with Unicode chars (♪, ★, 🗡, ☀, █) even when
+        # stdout is DEVNULL. Without this, Python's TextIOWrapper defaults to
+        # cp1252 on Windows and crashes on the first Unicode print.
+        launch_env = os.environ.copy()
+        launch_env["PYTHONIOENCODING"] = "utf-8"
+        launch_env["PYTHONUNBUFFERED"] = "1"
+
         # Launch as truly invisible background process
         if sys.platform == "win32":
             # Windows: CREATE_NO_WINDOW + CREATE_NEW_PROCESS_GROUP
@@ -470,6 +480,7 @@ def launch_daemon(spec: DaemonSpec, dry_run: bool = False) -> Optional[int]:
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
                 cwd=str(HFO_ROOT),
+                env=launch_env,
                 creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW,
             )
         else:
@@ -478,6 +489,7 @@ def launch_daemon(spec: DaemonSpec, dry_run: bool = False) -> Optional[int]:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 cwd=str(HFO_ROOT),
+                env=launch_env,
                 start_new_session=True,
             )
         
@@ -980,6 +992,141 @@ def show_deep_think_info():
 
 
 # =====================================================================
+# Watchdog — 24/7 Auto-Restart
+# =====================================================================
+
+def watchdog(tiers: list[str], check_interval: int = 30):
+    """Run a persistent watchdog that restarts dead daemons.
+
+    This is the 24/7 mechanism. The watchdog checks fleet status every
+    `check_interval` seconds and restarts any dead daemons. It does NOT
+    nuke-and-relaunch — it surgically restarts only the dead ones.
+
+    Run in foreground: python hfo_daemon_fleet.py --watchdog --free
+    """
+    print("=" * 72)
+    print("  HFO Gen89 — Watchdog (24/7 Auto-Restart)")
+    print(f"  Tiers: {', '.join(tiers)}")
+    print(f"  Check interval: {check_interval}s")
+    print("  Press Ctrl+C to stop.")
+    print("=" * 72)
+
+    # Build set of specs we're watching
+    all_specs = list(FLEET) + list(AUXILIARY_FLEET)
+    watched = [s for s in all_specs if s.tier in tiers]
+
+    has_ollama = _check_ollama()
+    has_gemini = bool(GEMINI_API_KEY)
+    has_vertex = VERTEX_AI_ENABLED
+
+    # Initial launch — nuke orphans first
+    print("\n  Initial launch...")
+    nuke_all_daemons(quiet=True)
+    time.sleep(1)
+
+    state = _load_state()
+    state["daemons"] = {}
+    launched_count = 0
+
+    for spec in watched:
+        if spec.requires_ollama and not has_ollama:
+            continue
+        if spec.requires_gemini and not has_gemini:
+            continue
+        if spec.requires_vertex and not has_vertex:
+            continue
+
+        pid = launch_daemon(spec)
+        if pid is not None:
+            state["daemons"][spec.name] = {
+                "pid": pid,
+                "script": spec.script,
+                "port": spec.port,
+                "tier": spec.tier,
+                "model": spec.model,
+                "args": spec.args,
+                "started": datetime.now(timezone.utc).isoformat(),
+                "restarts": 0,
+            }
+            launched_count += 1
+            print(f"    {spec.name} ({spec.port}) -> PID {pid}")
+            time.sleep(0.5)
+
+    _save_state(state)
+    print(f"  {launched_count} daemons launched.\n")
+
+    # Watchdog loop
+    cycle = 0
+    total_restarts = 0
+    try:
+        while True:
+            time.sleep(check_interval)
+            cycle += 1
+
+            state = _load_state()
+            daemons = state.get("daemons", {})
+
+            alive = 0
+            dead_names = []
+
+            for name, info in daemons.items():
+                pid = info.get("pid", 0)
+                if pid and _is_running(pid):
+                    alive += 1
+                else:
+                    dead_names.append(name)
+
+            ts = datetime.now().strftime("%H:%M:%S")
+
+            if not dead_names:
+                if cycle % 10 == 0:  # Report every 10 checks (~5 min at 30s)
+                    print(f"  [{ts}] Watchdog: {alive}/{len(daemons)} alive. All healthy.")
+                continue
+
+            # Restart dead daemons
+            print(f"  [{ts}] Watchdog: {len(dead_names)} dead: {', '.join(dead_names)}. Restarting...")
+
+            # Re-check infrastructure
+            has_ollama = _check_ollama()
+            has_gemini = bool(GEMINI_API_KEY)
+            has_vertex = VERTEX_AI_ENABLED
+
+            for name in dead_names:
+                spec = next((s for s in watched if s.name == name), None)
+                if not spec:
+                    continue
+                if spec.requires_ollama and not has_ollama:
+                    continue
+                if spec.requires_gemini and not has_gemini:
+                    continue
+                if spec.requires_vertex and not has_vertex:
+                    continue
+
+                pid = launch_daemon(spec)
+                if pid is not None:
+                    restarts = daemons.get(name, {}).get("restarts", 0) + 1
+                    state["daemons"][name] = {
+                        "pid": pid,
+                        "script": spec.script,
+                        "port": spec.port,
+                        "tier": spec.tier,
+                        "model": spec.model,
+                        "args": spec.args,
+                        "started": datetime.now(timezone.utc).isoformat(),
+                        "restarts": restarts,
+                    }
+                    total_restarts += 1
+                    print(f"    Restarted {name} ({spec.port}) -> PID {pid} (restart #{restarts})")
+                    time.sleep(0.5)
+
+            _save_state(state)
+
+    except KeyboardInterrupt:
+        print(f"\n  Watchdog stopped. Total restarts: {total_restarts}")
+        print(f"  Daemons still running — use --stop or --nuke to kill.")
+
+
+# =====================================================================
 # Main CLI
 # =====================================================================
 
@@ -991,6 +1138,7 @@ def main():
 Examples:
   python hfo_daemon_fleet.py --free          Launch free-tier daemons only
   python hfo_daemon_fleet.py --all           Launch everything (free + paid)
+  python hfo_daemon_fleet.py --watchdog --free  24/7 watchdog (auto-restart dead daemons)
   python hfo_daemon_fleet.py --status        Check fleet health
   python hfo_daemon_fleet.py --stop          Stop all daemons
   python hfo_daemon_fleet.py --map           Show 8-daemon architecture
@@ -1016,6 +1164,10 @@ Examples:
                         help="Show Gemini 3.1 Pro Deep Think info")
     parser.add_argument("--nuke", action="store_true",
                         help="Kill ALL daemon processes (tracked + orphans)")
+    parser.add_argument("--watchdog", action="store_true",
+                        help="Run persistent watchdog that auto-restarts dead daemons (24/7 mode)")
+    parser.add_argument("--watchdog-interval", type=int, default=30,
+                        help="Watchdog check interval in seconds (default: 30)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would launch without starting")
     
@@ -1054,6 +1206,12 @@ Examples:
             tiers.append("free")
         if args.paid:
             tiers.append("paid")
+    
+    if args.watchdog:
+        if not tiers:
+            tiers = ["free"]  # Default to free tier
+        watchdog(tiers, check_interval=args.watchdog_interval)
+        return
     
     if not tiers:
         # Default: show map + usage

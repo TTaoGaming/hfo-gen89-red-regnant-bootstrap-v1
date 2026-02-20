@@ -56,6 +56,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import psutil
+
 # ═══════════════════════════════════════════════════════════════
 # § 0  PATH RESOLUTION (PAL)
 # ═══════════════════════════════════════════════════════════════
@@ -87,7 +89,7 @@ except (KeyError, FileNotFoundError):
 
 GEN = os.getenv("HFO_GENERATION", "89")
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-DEFAULT_MODEL = os.getenv("HFO_SINGER_MODEL", "qwen2.5-coder:7b")
+DEFAULT_MODEL = os.getenv("HFO_P4_MODEL", "qwen2.5-coder:7b")
 
 # ═══════════════════════════════════════════════════════════════
 # § 1  CONSTANTS & CONFIG
@@ -214,7 +216,25 @@ def write_event(
     data: dict,
     source: str = SOURCE_TAG,
 ) -> int:
-    """Write CloudEvent to stigmergy_events. Returns rowid."""
+    """Write CloudEvent to stigmergy_events. Returns rowid.
+    
+    Auto-injects signal_metadata if not already present.
+    """
+    # ── Signal metadata auto-injection (8^N coordinator retrofit) ──
+    if "signal_metadata" not in data:
+        try:
+            from hfo_signal_shim import build_signal_metadata
+            data["signal_metadata"] = build_signal_metadata(
+                port=DAEMON_PORT,
+                model_id=data.get("ai_model", data.get("model", DEFAULT_MODEL)),
+                daemon_name=DAEMON_NAME,
+                daemon_version=DAEMON_VERSION,
+                inference_latency_ms=data.get("inference_ms", 0),
+                tokens_out=data.get("eval_tokens", 0),
+                task_type=event_type.split(".")[-1],
+            )
+        except Exception:
+            pass  # Fail open — don't break daemon if shim missing
     now = datetime.now(timezone.utc).isoformat()
     trace_id = secrets.token_hex(16)
     span_id = secrets.token_hex(8)
@@ -747,7 +767,34 @@ async def daemon_loop(
     consecutive_errors = 0
     max_consecutive_errors = 10  # Self-heal up to 10 in a row
 
+    cpu_limit = float(os.getenv("HFO_CPU_THROTTLE_PCT", "75.0"))
+    ram_limit_gb = float(os.getenv("HFO_RAM_THROTTLE_GB", "4.0"))
+
     while singer.is_running:
+        # Throttle check
+        while singer.is_running:
+            cpu_pct = psutil.cpu_percent(interval=0.5)
+            ram_free_gb = psutil.virtual_memory().available / (1024**3)
+            
+            throttled = False
+            reasons = []
+            if cpu_pct > cpu_limit:
+                throttled = True
+                reasons.append(f"CPU {cpu_pct:.1f}% > {cpu_limit}%")
+            if ram_free_gb < ram_limit_gb:
+                throttled = True
+                reasons.append(f"RAM {ram_free_gb:.1f}GB < {ram_limit_gb}GB")
+                
+            if throttled:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                print(f"  [{ts}] [THROTTLE] Singer paused: {', '.join(reasons)}", flush=True)
+                await asyncio.sleep(10)
+            else:
+                break
+
+        if not singer.is_running:
+            break
+
         report = singer.run_cycle()
 
         # One-line cycle summary

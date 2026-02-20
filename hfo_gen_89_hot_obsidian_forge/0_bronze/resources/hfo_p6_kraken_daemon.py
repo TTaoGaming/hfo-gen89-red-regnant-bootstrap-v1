@@ -20,6 +20,7 @@ ENRICHMENT TASKS (5 concurrent asyncio loops):
     T3 — Doc Type Classify   (every 300s)  Assign doc_type to untyped docs
     T4 — Lineage Mining      (every 600s)  Discover cross-references between docs
     T5 — Heartbeat + Stats   (every  60s)  Daemon alive signal + progress report
+    T6 — Stigmergy Rollup    (every 3600s) Auto-rollup stigmergy into daily/weekly summaries
 
 SAFETY GUARANTEES:
     - ADDITIVE ONLY: Never deletes, never overwrites existing non-null fields
@@ -188,6 +189,19 @@ def write_stigmergy_event(
     data: dict,
     source: str = P6_SOURCE,
 ) -> str:
+    # ── Signal metadata auto-injection (8^N coordinator retrofit) ──
+    if "signal_metadata" not in data:
+        try:
+            from hfo_signal_shim import build_signal_metadata
+            data["signal_metadata"] = build_signal_metadata(
+                port="P6",
+                model_id=data.get("model", P6_MODEL),
+                daemon_name="P6 Kraken",
+                daemon_version="1.0",
+                task_type=event_type.split(".")[-1],
+            )
+        except Exception:
+            pass  # Fail open — don't break daemon if shim missing
     event_id = hashlib.md5(
         f"{event_type}{time.time()}{secrets.token_hex(4)}".encode()
     ).hexdigest()
@@ -327,11 +341,6 @@ class KrakenKeeper:
 
         try:
             conn = get_db_readwrite()
-        except Exception as e:
-            results["errors"] = 1
-            return results
-
-        try:
             # Find docs missing BLUFs
             cursor = conn.execute(
                 """SELECT id, title, SUBSTR(content, 1, 2000) as content_preview,
@@ -342,8 +351,13 @@ class KrakenKeeper:
                    LIMIT ?""",
                 (self.batch_size,),
             )
-            rows = cursor.fetchall()
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+        except Exception as e:
+            results["errors"] = 1
+            return results
 
+        try:
             for row in rows:
                 if not self._running:
                     break
@@ -381,23 +395,30 @@ class KrakenKeeper:
                     bluf = bluf[:497] + "..."
 
                 if not self.dry_run:
-                    conn.execute(
-                        "UPDATE documents SET bluf = ? WHERE id = ? AND (bluf IS NULL OR bluf = '---')",
-                        (bluf, doc_id),
-                    )
-                    write_stigmergy_event(
-                        conn, "hfo.gen89.kraken.bluf_enriched",
-                        f"BLUF:doc_{doc_id}",
-                        {
-                            "doc_id": doc_id,
-                            "title": title[:100],
-                            "source": source,
-                            "bluf_length": len(bluf),
-                            "bluf_preview": bluf[:200],
-                            "model": self.model,
-                            "task": "T1_BLUF_GENERATION",
-                        },
-                    )
+                    try:
+                        wconn = get_db_readwrite()
+                        wconn.execute(
+                            "UPDATE documents SET bluf = ? WHERE id = ? AND (bluf IS NULL OR bluf = '---')",
+                            (bluf, doc_id),
+                        )
+                        write_stigmergy_event(
+                            wconn, "hfo.gen89.kraken.bluf_enriched",
+                            f"BLUF:doc_{doc_id}",
+                            {
+                                "doc_id": doc_id,
+                                "title": title[:100],
+                                "source": source,
+                                "bluf_length": len(bluf),
+                                "bluf_preview": bluf[:200],
+                                "model": self.model,
+                                "task": "T1_BLUF_GENERATION",
+                            },
+                        )
+                        wconn.close()
+                    except Exception as e:
+                        print(f"  [T1 DB ERROR] {e}", file=sys.stderr)
+                        results["errors"] += 1
+                        continue
 
                 results["enriched"] += 1
                 results["docs"].append({"id": doc_id, "title": title[:60]})
@@ -408,8 +429,6 @@ class KrakenKeeper:
             results["errors"] += 1
             self.stats["errors"] += 1
             print(f"  [T1 ERROR] {e}", file=sys.stderr)
-        finally:
-            conn.close()
 
         return results
 
@@ -421,11 +440,6 @@ class KrakenKeeper:
 
         try:
             conn = get_db_readwrite()
-        except Exception as e:
-            results["errors"] = 1
-            return results
-
-        try:
             cursor = conn.execute(
                 """SELECT id, title, bluf, SUBSTR(content, 1, 1500) as content_preview,
                           source, tags
@@ -435,8 +449,13 @@ class KrakenKeeper:
                    LIMIT ?""",
                 (self.batch_size,),
             )
-            rows = cursor.fetchall()
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+        except Exception as e:
+            results["errors"] = 1
+            return results
 
+        try:
             port_descriptions = "\n".join(
                 f"  {pid}: {info['label']} — {info['domain']}"
                 for pid, info in OCTREE_PORTS.items()
@@ -488,23 +507,30 @@ class KrakenKeeper:
                 port = port_match.group(0)
 
                 if not self.dry_run:
-                    conn.execute(
-                        "UPDATE documents SET port = ? WHERE id = ? AND port IS NULL",
-                        (port, doc_id),
-                    )
-                    write_stigmergy_event(
-                        conn, "hfo.gen89.kraken.port_classified",
-                        f"PORT:{port}:doc_{doc_id}",
-                        {
-                            "doc_id": doc_id,
-                            "title": title[:100],
-                            "assigned_port": port,
-                            "port_label": OCTREE_PORTS[port]["label"],
-                            "source": source,
-                            "model": self.model,
-                            "task": "T2_PORT_CLASSIFICATION",
-                        },
-                    )
+                    try:
+                        wconn = get_db_readwrite()
+                        wconn.execute(
+                            "UPDATE documents SET port = ? WHERE id = ? AND port IS NULL",
+                            (port, doc_id),
+                        )
+                        write_stigmergy_event(
+                            wconn, "hfo.gen89.kraken.port_classified",
+                            f"PORT:{port}:doc_{doc_id}",
+                            {
+                                "doc_id": doc_id,
+                                "title": title[:100],
+                                "assigned_port": port,
+                                "port_label": OCTREE_PORTS[port]["label"],
+                                "source": source,
+                                "model": self.model,
+                                "task": "T2_PORT_CLASSIFICATION",
+                            },
+                        )
+                        wconn.close()
+                    except Exception as e:
+                        print(f"  [T2 DB ERROR] {e}", file=sys.stderr)
+                        results["errors"] += 1
+                        continue
 
                 results["classified"] += 1
                 results["docs"].append({"id": doc_id, "port": port, "title": title[:60]})
@@ -515,8 +541,6 @@ class KrakenKeeper:
             results["errors"] += 1
             self.stats["errors"] += 1
             print(f"  [T2 ERROR] {e}", file=sys.stderr)
-        finally:
-            conn.close()
 
         return results
 
@@ -528,11 +552,6 @@ class KrakenKeeper:
 
         try:
             conn = get_db_readwrite()
-        except Exception as e:
-            results["errors"] = 1
-            return results
-
-        try:
             cursor = conn.execute(
                 """SELECT id, title, bluf, SUBSTR(content, 1, 1000) as content_preview,
                           source, tags
@@ -542,8 +561,13 @@ class KrakenKeeper:
                    LIMIT ?""",
                 (self.batch_size,),
             )
-            rows = cursor.fetchall()
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+        except Exception as e:
+            results["errors"] = 1
+            return results
 
+        try:
             types_list = ", ".join(DOC_TYPES)
 
             for row in rows:
@@ -587,22 +611,29 @@ class KrakenKeeper:
                     continue
 
                 if not self.dry_run:
-                    conn.execute(
-                        "UPDATE documents SET doc_type = ? WHERE id = ? AND doc_type IS NULL",
-                        (matched_type, doc_id),
-                    )
-                    write_stigmergy_event(
-                        conn, "hfo.gen89.kraken.doctype_classified",
-                        f"DOCTYPE:{matched_type}:doc_{doc_id}",
-                        {
-                            "doc_id": doc_id,
-                            "title": title[:100],
-                            "assigned_type": matched_type,
-                            "source": source,
-                            "model": self.model,
-                            "task": "T3_DOCTYPE_CLASSIFICATION",
-                        },
-                    )
+                    try:
+                        wconn = get_db_readwrite()
+                        wconn.execute(
+                            "UPDATE documents SET doc_type = ? WHERE id = ? AND doc_type IS NULL",
+                            (matched_type, doc_id),
+                        )
+                        write_stigmergy_event(
+                            wconn, "hfo.gen89.kraken.doctype_classified",
+                            f"DOCTYPE:{matched_type}:doc_{doc_id}",
+                            {
+                                "doc_id": doc_id,
+                                "title": title[:100],
+                                "assigned_type": matched_type,
+                                "source": source,
+                                "model": self.model,
+                                "task": "T3_DOCTYPE_CLASSIFICATION",
+                            },
+                        )
+                        wconn.close()
+                    except Exception as e:
+                        print(f"  [T3 DB ERROR] {e}", file=sys.stderr)
+                        results["errors"] += 1
+                        continue
 
                 results["classified"] += 1
                 results["docs"].append({"id": doc_id, "type": matched_type})
@@ -613,8 +644,6 @@ class KrakenKeeper:
             results["errors"] += 1
             self.stats["errors"] += 1
             print(f"  [T3 ERROR] {e}", file=sys.stderr)
-        finally:
-            conn.close()
 
         return results
 
@@ -626,11 +655,6 @@ class KrakenKeeper:
 
         try:
             conn = get_db_readwrite()
-        except Exception as e:
-            results["errors"] = 1
-            return results
-
-        try:
             # Pick a random doc with content
             cursor = conn.execute(
                 """SELECT id, title, SUBSTR(content, 1, 3000) as content_preview,
@@ -641,8 +665,13 @@ class KrakenKeeper:
                    LIMIT ?""",
                 (self.batch_size,),
             )
-            rows = cursor.fetchall()
+            rows = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+        except Exception as e:
+            results["errors"] = 1
+            return results
 
+        try:
             for row in rows:
                 if not self._running:
                     break
@@ -699,7 +728,8 @@ class KrakenKeeper:
                         if not safe_topic:
                             continue
 
-                        target_cursor = conn.execute(
+                        wconn = get_db_readwrite()
+                        target_cursor = wconn.execute(
                             """SELECT id, content_hash FROM documents
                                WHERE id IN (
                                    SELECT rowid FROM documents_fts
@@ -713,29 +743,31 @@ class KrakenKeeper:
                         if target:
                             target_hash = target["content_hash"] or ""
                             # Check if edge already exists
-                            existing = conn.execute(
+                            existing = wconn.execute(
                                 """SELECT 1 FROM lineage
                                    WHERE doc_id = ? AND depends_on_hash = ?""",
                                 (doc_id, target_hash),
                             ).fetchone()
 
                             if not existing and target_hash and not self.dry_run:
-                                conn.execute(
+                                wconn.execute(
                                     """INSERT INTO lineage (doc_id, depends_on_hash, relation)
                                        VALUES (?, ?, ?)""",
                                     (doc_id, target_hash, f"references:{topic[:100]}"),
                                 )
+                                wconn.commit()
                                 results["edges_added"] += 1
                                 self.stats["lineage_edges_added"] += 1
+                        wconn.close()
 
                     except sqlite3.OperationalError:
                         # FTS query syntax issue — skip
                         pass
 
                 if results["edges_added"] > 0 and not self.dry_run:
-                    conn.commit()
+                    wconn = get_db_readwrite()
                     write_stigmergy_event(
-                        conn, "hfo.gen89.kraken.lineage_mined",
+                        wconn, "hfo.gen89.kraken.lineage_mined",
                         f"LINEAGE:doc_{doc_id}",
                         {
                             "doc_id": doc_id,
@@ -746,18 +778,148 @@ class KrakenKeeper:
                             "task": "T4_LINEAGE_MINING",
                         },
                     )
+                    wconn.commit()
+                    wconn.close()
                     print(f"  [LINEAGE] doc {doc_id}: {results['edges_added']} new edges")
 
         except Exception as e:
             results["errors"] += 1
             self.stats["errors"] += 1
             print(f"  [T4 ERROR] {e}", file=sys.stderr)
-        finally:
-            conn.close()
 
         return results
 
-    # ── T5: HEARTBEAT + STATS ────────────────────────────────
+    # ── T5: STIGMERGY ROLLUP ─────────────────────────────────
+
+    async def rollup_stigmergy(self) -> dict:
+        """Auto-rollup stigmergy events into daily/weekly summaries."""
+        results = {"rollups_created": 0, "errors": 0}
+
+        try:
+            conn = get_db_readwrite()
+            from datetime import datetime, timedelta, timezone
+            now = datetime.now(timezone.utc)
+            
+            # 1. Daily Rollup (for yesterday)
+            yesterday = now - timedelta(days=1)
+            day_str = yesterday.strftime("%Y-%m-%d")
+            title_daily = f"Stigmergy Daily Rollup: {day_str}"
+            
+            # Check if exists
+            cursor = conn.execute("SELECT id FROM documents WHERE title = ?", (title_daily,))
+            daily_exists = cursor.fetchone() is not None
+            
+            daily_events = []
+            if not daily_exists:
+                start_time = yesterday.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+                end_time = yesterday.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+                
+                daily_events = [dict(row) for row in conn.execute(
+                    """SELECT event_type, timestamp, subject, substr(data_json, 1, 500) as data_preview
+                       FROM stigmergy_events
+                       WHERE timestamp >= ? AND timestamp <= ?
+                       ORDER BY timestamp ASC""",
+                    (start_time, end_time)
+                ).fetchall()]
+
+            # 2. Weekly Rollup (for last week)
+            weekly_exists = True
+            weekly_events = []
+            week_str = ""
+            title_weekly = ""
+            if now.weekday() == 0: # Monday
+                last_monday = now - timedelta(days=7)
+                last_sunday = now - timedelta(days=1)
+                week_str = f"{last_monday.strftime('%Y-%m-%d')} to {last_sunday.strftime('%Y-%m-%d')}"
+                title_weekly = f"Stigmergy Weekly Rollup: {week_str}"
+                
+                cursor = conn.execute("SELECT id FROM documents WHERE title = ?", (title_weekly,))
+                weekly_exists = cursor.fetchone() is not None
+                if not weekly_exists:
+                    start_time = last_monday.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+                    end_time = last_sunday.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+                    
+                    weekly_events = [dict(row) for row in conn.execute(
+                        """SELECT event_type, timestamp, subject, substr(data_json, 1, 500) as data_preview
+                           FROM stigmergy_events
+                           WHERE timestamp >= ? AND timestamp <= ?
+                           ORDER BY timestamp ASC""",
+                        (start_time, end_time)
+                    ).fetchall()]
+            conn.close()
+        except Exception as e:
+            results["errors"] = 1
+            return results
+
+        try:
+            if not daily_exists and daily_events:
+                events_text = "\n".join([f"[{e['timestamp'][:19]}] {e['event_type']} - {e['subject']}" for e in daily_events])
+                prompt = (
+                    f"Summarize the following stigmergy events for {day_str} into a concise daily rollup report. "
+                    f"Group by major themes or ports if possible.\n\nEvents:\n{events_text[:8000]}"
+                )
+                
+                raw_response = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda p=prompt: ollama_generate(p, system="You are the Kraken Keeper. Summarize the swarm's daily activity.", model=self.model),
+                )
+                self.stats["ollama_calls"] += 1
+                summary = _strip_think_tags(raw_response)
+                
+                if summary and not self.dry_run:
+                    content = f"# {title_daily}\n\n{summary}\n\n## Raw Event Count: {len(daily_events)}"
+                    content_hash = hashlib.sha256(content.encode()).hexdigest()
+                    bluf = f"Daily stigmergy rollup for {day_str} covering {len(daily_events)} events."
+                    
+                    wconn = get_db_readwrite()
+                    wconn.execute(
+                        """INSERT INTO documents (title, bluf, source, port, doc_type, content, content_hash, word_count, ingested_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (title_daily, bluf, "kraken_rollup", "P6", "rollup", content, content_hash, len(content.split()), now.isoformat())
+                    )
+                    wconn.commit()
+                    wconn.close()
+                    results["rollups_created"] += 1
+                    print(f"  [ROLLUP] Created daily rollup for {day_str}")
+
+            if not weekly_exists and weekly_events:
+                events_text = "\n".join([f"[{e['timestamp'][:19]}] {e['event_type']} - {e['subject']}" for e in weekly_events])
+                prompt = (
+                    f"Summarize the following stigmergy events for the week of {week_str} into a concise weekly rollup report. "
+                    f"Group by major themes or ports if possible.\n\nEvents:\n{events_text[:8000]}"
+                )
+                
+                raw_response = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda p=prompt: ollama_generate(p, system="You are the Kraken Keeper. Summarize the swarm's weekly activity.", model=self.model),
+                )
+                self.stats["ollama_calls"] += 1
+                summary = _strip_think_tags(raw_response)
+                
+                if summary and not self.dry_run:
+                    content = f"# {title_weekly}\n\n{summary}\n\n## Raw Event Count: {len(weekly_events)}"
+                    content_hash = hashlib.sha256(content.encode()).hexdigest()
+                    bluf = f"Weekly stigmergy rollup for {week_str} covering {len(weekly_events)} events."
+                    
+                    wconn = get_db_readwrite()
+                    wconn.execute(
+                        """INSERT INTO documents (title, bluf, source, port, doc_type, content, content_hash, word_count, ingested_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (title_weekly, bluf, "kraken_rollup", "P6", "rollup", content, content_hash, len(content.split()), now.isoformat())
+                    )
+                    wconn.commit()
+                    wconn.close()
+                    results["rollups_created"] += 1
+                    print(f"  [ROLLUP] Created weekly rollup for {week_str}")
+
+        except Exception as e:
+            results["errors"] += 1
+            self.stats["errors"] += 1
+            print(f"  [T5 ERROR] {e}", file=sys.stderr)
+
+        return results
+
+    # ── T6: HEARTBEAT + STATS ────────────────────────────────
 
     def get_enrichment_progress(self) -> dict:
         """Query current SSOT enrichment state."""
@@ -933,6 +1095,11 @@ async def daemon_loop(
             r = await kraken.mine_lineage()
             print(f"    Edges added: {r['edges_added']}, Scanned: {r['docs_scanned']}\n")
 
+        if "rollup" in enabled_tasks:
+            print("  --- T6: Stigmergy Rollup ---")
+            r = await kraken.rollup_stigmergy()
+            print(f"    Rollups created: {r['rollups_created']}, Errors: {r['errors']}\n")
+
         hb = await kraken.emit_heartbeat()
         progress = hb.get("progress", {})
         print("  --- Final Progress ---")
@@ -955,6 +1122,8 @@ async def daemon_loop(
         tasks.append(task_loop("T3:TYPE", kraken.classify_doctypes, intervals.get("doctype", 300), kraken))
     if "lineage" in enabled_tasks:
         tasks.append(task_loop("T4:LINEAGE", kraken.mine_lineage, intervals.get("lineage", 600), kraken))
+    if "rollup" in enabled_tasks:
+        tasks.append(task_loop("T6:ROLLUP", kraken.rollup_stigmergy, intervals.get("rollup", 3600), kraken))
     # Heartbeat always runs
     tasks.append(task_loop("T5:HEARTBEAT", kraken.emit_heartbeat, intervals.get("heartbeat", 60), kraken))
 
@@ -1022,14 +1191,15 @@ Examples:
     )
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--dry-run", action="store_true", help="No writes, just show targets")
-    parser.add_argument("--tasks", type=str, default="bluf,port,doctype,lineage",
-                        help="Comma-separated tasks: bluf,port,doctype,lineage")
+    parser.add_argument("--tasks", type=str, default="bluf,port,doctype,lineage,rollup",
+                        help="Comma-separated tasks: bluf,port,doctype,lineage,rollup")
     parser.add_argument("--model", type=str, default=P6_MODEL, help=f"Ollama model (default: {P6_MODEL})")
     parser.add_argument("--batch-size", type=int, default=3, help="Docs per task cycle (default: 3)")
     parser.add_argument("--bluf-interval", type=float, default=120, help="BLUF cycle interval (seconds)")
     parser.add_argument("--port-interval", type=float, default=180, help="Port cycle interval (seconds)")
     parser.add_argument("--doctype-interval", type=float, default=300, help="DocType cycle interval (seconds)")
     parser.add_argument("--lineage-interval", type=float, default=600, help="Lineage cycle interval (seconds)")
+    parser.add_argument("--rollup-interval", type=float, default=3600, help="Rollup cycle interval (seconds)")
     parser.add_argument("--status", action="store_true", help="Show enrichment progress and exit")
     parser.add_argument("--json", action="store_true", help="Output in JSON")
 
@@ -1099,6 +1269,7 @@ Examples:
         "port": args.port_interval,
         "doctype": args.doctype_interval,
         "lineage": args.lineage_interval,
+        "rollup": args.rollup_interval,
         "heartbeat": 60,
     }
 

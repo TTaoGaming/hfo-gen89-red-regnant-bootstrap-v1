@@ -56,6 +56,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import psutil
+
 # ── Path Resolution ────────────────────────────────────────────
 
 def _find_root() -> Path:
@@ -107,41 +109,37 @@ def get_db_readwrite() -> sqlite3.Connection:
 def write_stigmergy_event(conn: sqlite3.Connection, event_type: str,
                           subject: str, data: dict,
                           source: str = "hfo_background_daemon_gen89"):
-    """Write a CloudEvent to the stigmergy trail."""
-    event_id = hashlib.md5(
-        f"{event_type}{time.time()}{secrets.token_hex(4)}".encode()
-    ).hexdigest()
+    """Write a CloudEvent to the stigmergy trail via canonical write function.
     
-    now = datetime.now(timezone.utc).isoformat()
-    trace_id = secrets.token_hex(16)
-    span_id = secrets.token_hex(8)
+    STRUCTURAL ENFORCEMENT: Delegates to hfo_ssot_write.write_stigmergy_event()
+    which requires signal_metadata as a validated schema. This wrapper builds
+    signal_metadata from daemon defaults — callers don't need to change.
     
-    event = {
-        "specversion": "1.0",
-        "id": event_id,
-        "type": event_type,
-        "source": source,
-        "subject": subject,
-        "time": now,
-        "timestamp": now,
-        "datacontenttype": "application/json",
-        "trace_id": trace_id,
-        "span_id": span_id,
-        "traceparent": f"00-{trace_id}-{span_id}-01",
-        "phase": "CLOUDEVENT",
-        "data": data,
-    }
-    
-    content_hash = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
-    
-    conn.execute(
-        """INSERT OR IGNORE INTO stigmergy_events 
-           (event_type, timestamp, subject, source, data_json, content_hash)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (event_type, now, subject, source, json.dumps(event), content_hash)
+    Replaces the old fail-open try/except:pass pattern with fail-closed gating.
+    """
+    from hfo_ssot_write import (
+        write_stigmergy_event as canonical_write,
+        build_signal_metadata,
     )
-    conn.commit()
-    return event_id
+    
+    # Build signal_metadata from daemon defaults
+    sig = build_signal_metadata(
+        port="P7",
+        model_id=data.get("model", "gemini-2.5-flash"),
+        daemon_name="Background Daemon",
+        daemon_version="1.0",
+        task_type=event_type.split(".")[-1],
+    )
+    
+    # Delegate to canonical write (signal_metadata is REQUIRED, not optional)
+    return canonical_write(
+        event_type=event_type,
+        subject=subject,
+        data=data,
+        signal_metadata=sig,
+        source=source,
+        conn=conn,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -217,6 +215,21 @@ class GeminiClient:
         """Resolve tier name or model ID to concrete API model ID."""
         return get_model(tier_or_id).model_id
     
+    def _log_stigmergy(self, model_id: str, task_type: str):
+        """Log Gemini API usage to stigmergy for persistent tracking."""
+        try:
+            conn = get_db_readwrite()
+            write_stigmergy_event(
+                conn=conn,
+                event_type=f"hfo.gemini.usage.{task_type}",
+                subject=f"gemini:{model_id}",
+                data={"model": model_id, "task": task_type}
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Failed to log Gemini usage to stigmergy: {e}")
+    
     async def chat(self, prompt: str, model: str = None,
                    system_instruction: str = "",
                    temperature: float = 0.5) -> str:
@@ -258,6 +271,7 @@ class GeminiClient:
         )
         
         self._rate_limiter.record(model_id)
+        self._log_stigmergy(model_id, "chat")
         return response.text
     
     async def search_grounded(self, query: str, model: str = "frontier_flash") -> dict:
@@ -285,6 +299,7 @@ class GeminiClient:
         )
         
         self._rate_limiter.record(model_id)
+        self._log_stigmergy(model_id, "search_grounded")
         
         sources = []
         if (response.candidates and
@@ -1212,10 +1227,39 @@ class BackgroundDaemon:
         print("  Press Ctrl+C to stop gracefully.")
         print("=" * 60)
     
+    async def _check_throttle(self, name: str):
+        """Check resource limits and throttle if necessary."""
+        cpu_limit = float(os.getenv("HFO_CPU_THROTTLE_PCT", "75.0"))
+        ram_limit_gb = float(os.getenv("HFO_RAM_THROTTLE_GB", "4.0"))
+        
+        while self.running:
+            cpu_pct = psutil.cpu_percent(interval=0.5)
+            ram_free_gb = psutil.virtual_memory().available / (1024**3)
+            
+            throttled = False
+            reasons = []
+            if cpu_pct > cpu_limit:
+                throttled = True
+                reasons.append(f"CPU {cpu_pct:.1f}% > {cpu_limit}%")
+            if ram_free_gb < ram_limit_gb:
+                throttled = True
+                reasons.append(f"RAM {ram_free_gb:.1f}GB < {ram_limit_gb}GB")
+                
+            if throttled:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                print(f"  [{ts}] [THROTTLE] {name} paused: {', '.join(reasons)}", flush=True)
+                await asyncio.sleep(10)
+            else:
+                break
+
     async def _run_task_loop(self, name: str, task, interval: int):
         """Run a single task on a recurring interval."""
         while self.running:
             try:
+                await self._check_throttle(name)
+                if not self.running:
+                    break
+                
                 ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                 print(f"  [{ts}] Running {name}...", flush=True)
                 
