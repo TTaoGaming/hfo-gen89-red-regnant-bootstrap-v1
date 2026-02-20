@@ -82,8 +82,21 @@ from typing import Any, Optional
 
 import psutil
 
-# ═══════════════════════════════════════════════════════════════
-# § 0  PATH RESOLUTION (PAL)
+# Resource governor — hard 80% GPU ceiling
+try:
+    _rg_dir = str(Path(__file__).resolve().parent)
+    if _rg_dir not in sys.path:
+        sys.path.insert(0, _rg_dir)
+    from hfo_resource_governor import (
+        wait_for_gpu_headroom as _wait_gpu_headroom,
+        start_background_monitor as _start_rg_monitor,
+    )
+    _RESOURCE_GOVERNOR_AVAILABLE = True
+except ImportError:
+    _RESOURCE_GOVERNOR_AVAILABLE = False
+    def _wait_gpu_headroom(*a, **kw): return True
+    def _start_rg_monitor(*a, **kw): pass
+
 # ═══════════════════════════════════════════════════════════════
 
 def _find_root() -> Path:
@@ -250,12 +263,20 @@ def ollama_generate(
     max_tokens: int = MAX_TOKENS,
     timeout: float = OLLAMA_TIMEOUT,
 ) -> dict:
-    """Call Ollama /api/generate. Returns {response, duration_ms, error}."""
+    """Call Ollama /api/generate. Returns {response, duration_ms, error}.
+    Resource governor gate: waits for VRAM headroom (80% ceiling) before calling.
+    keep_alive=0s evicts model from VRAM immediately after call.
+    """
+    if _RESOURCE_GOVERNOR_AVAILABLE:
+        ok = _wait_gpu_headroom(caller="dancer_ollama", verbose=False)
+        if not ok:
+            return {"response": "", "error": "VRAM budget saturated", "model": model, "done": False}
     url = f"{OLLAMA_BASE}/api/generate"
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": "0s",   # evict model from VRAM immediately after call
         "options": {
             "num_predict": max_tokens,
             "temperature": temperature,

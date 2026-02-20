@@ -81,6 +81,28 @@ from typing import Optional
 
 import httpx
 
+# Resource governor — hard 80% GPU ceiling for background daemons
+# Optional import: governor works standalone, daemon works without it
+try:
+    _rg_dir = str(Path(__file__).resolve().parent)
+    if _rg_dir not in sys.path:
+        sys.path.insert(0, _rg_dir)
+    from hfo_resource_governor import (
+        wait_for_gpu_headroom as _wait_gpu_headroom,
+        evict_idle_ollama_models as _evict_ollama,
+        start_background_monitor as _start_rg_monitor,
+        get_resource_snapshot as _get_resource_snapshot,
+        VRAM_BUDGET_GB as _VRAM_BUDGET_GB,
+    )
+    _RESOURCE_GOVERNOR_AVAILABLE = True
+except ImportError:
+    _RESOURCE_GOVERNOR_AVAILABLE = False
+    def _wait_gpu_headroom(*a, **kw): return True   # no-op fallback
+    def _evict_ollama(*a, **kw): return 0
+    def _start_rg_monitor(*a, **kw): pass
+    def _get_resource_snapshot(): return None
+    _VRAM_BUDGET_GB = 10.0
+
 # ═══════════════════════════════════════════════════════════════
 # PATH RESOLUTION VIA PAL
 # ═══════════════════════════════════════════════════════════════
@@ -122,7 +144,7 @@ except (KeyError, FileNotFoundError):
 
 GEN = os.environ.get("HFO_GENERATION", "89")
 OLLAMA_BASE = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-P6_MODEL = os.environ.get("P6_OLLAMA_MODEL", "gemma3:4b")
+P6_MODEL = os.environ.get("P6_OLLAMA_MODEL", "lfm2.5-thinking:1.2b")  # 0.7 GB VRAM, 47 tok/s — tiny-first to save GPU headroom
 P6_SOURCE = f"hfo_p6_kraken_daemon_gen{GEN}"
 STATE_FILE = HFO_ROOT / ".hfo_p6_kraken_state.json"
 
@@ -247,13 +269,35 @@ def ollama_generate(
     timeout: float = 180,
     temperature: float = 0.3,
     num_predict: int = 1024,
+    keep_alive: str = "0s",  # evict model from VRAM after call — frees GPU headroom
+    _caller: str = "kraken",
 ) -> str:
-    """Call Ollama generate API. Returns response text or empty on error."""
+    """
+    Call Ollama generate API. Returns response text or empty on error.
+
+    Resource governor gate (80% VRAM ceiling):
+      Before each call, waits for GPU headroom. If VRAM budget is saturated
+      for more than GPU_SLOT_TIMEOUT_S seconds, returns "" so the caller
+      falls back to NPU. This prevents the system from ever pushing GPU to 100%.
+    """
+    # ── Resource governor gate ──────────────────────────────────────────
+    if _RESOURCE_GOVERNOR_AVAILABLE:
+        ok = _wait_gpu_headroom(caller=f"ollama_generate/{_caller}", verbose=False)
+        if not ok:
+            # Don't crash — return empty so caller falls back to NPU or skips
+            print(
+                f"[RESOURCE GOV] ollama_generate/{_caller}: VRAM budget saturated — "
+                "skipping GPU call (NPU/skip fallback)",
+                file=sys.stderr,
+            )
+            return ""
+    # ───────────────────────────────────────────────────────────────────
     url = f"{OLLAMA_BASE}/api/generate"
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": keep_alive,
         "options": {
             "num_predict": num_predict,
             "temperature": temperature,
@@ -284,6 +328,113 @@ def ollama_available() -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
+# NPU-GPU HYBRID INTELLIGENCE — VRAM Governor + NPU Triage
+# ═══════════════════════════════════════════════════════════════
+
+# Tiny-first model hierarchy (ascending VRAM cost)
+MODEL_HIERARCHY = [
+    ("lfm2.5-thinking:1.2b", 0.7),    # 47 tok/s — zero-impact enrichment
+    ("llama3.2:3b",          1.9),    # fallback tier 1
+    ("qwen2.5:3b",           1.9),    # fallback tier 2
+    ("gemma3:4b",            3.1),    # fallback heavy
+]
+VRAM_SATURATED_GB = 13.0   # Above this: tiny models only
+VRAM_MODERATE_GB  = 10.0   # Above this: prefer small models
+
+
+def get_vram_state() -> dict:
+    """Query Ollama /api/ps for current VRAM load."""
+    try:
+        with httpx.Client(timeout=5) as c:
+            r = c.get(f"{OLLAMA_BASE}/api/ps")
+            if r.status_code == 200:
+                models = r.json().get("models", [])
+                total_gb = sum(m.get("size_vram", 0) for m in models) / 1_073_741_824
+                return {
+                    "total_gb": round(total_gb, 2),
+                    "loaded": [m.get("name", "") for m in models],
+                }
+    except Exception:
+        pass
+    return {"total_gb": 0.0, "loaded": []}
+
+
+def vram_governor() -> str:
+    """
+    Return the smallest safe model given current VRAM load.
+
+    Strategy — tiny-first:
+      >13 GB (saturated) : lfm2.5-thinking:1.2b  (0.7 GB)
+      >10 GB (moderate)  : llama3.2:3b or qwen2.5:3b  (1.9 GB)
+      <10 GB (relaxed)   : gemma3:4b  (3.1 GB)
+
+    Always prefers a model already hot in VRAM (zero swap cost).
+    Falls back to P6_MODEL if nothing in hierarchy is installed.
+    """
+    state = get_vram_state()
+    vram = state["total_gb"]
+    loaded = state["loaded"]
+
+    # Prefer hot models (already in VRAM = zero eviction overhead)
+    for name, _ in MODEL_HIERARCHY:
+        if any(name in ln for ln in loaded):
+            return name
+
+    # Capacity-based selection
+    if vram >= VRAM_SATURATED_GB:
+        return "lfm2.5-thinking:1.2b"
+    elif vram >= VRAM_MODERATE_GB:
+        return "qwen2.5:3b"
+    else:
+        return "gemma3:4b"
+
+
+def npu_bluf_thief(doc_id: int, threshold: float = 0.88) -> Optional[str]:
+    """
+    Steal a BLUF from a semantically near-identical document (zero GPU cost).
+
+    Uses stored NPU embeddings (cosine similarity via all-MiniLM-L6-v2).
+    Returns an existing BLUF string, or None if no similar doc found.
+
+    Threshold guide:
+      0.95+ near-duplicate  (safe to copy verbatim)
+      0.88+ same topic      (adapt/reuse BLUF)     ← default
+      0.70+ related topic   (reference only)
+    """
+    try:
+        _npu_res = str(HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources")
+        if _npu_res not in sys.path:
+            sys.path.insert(0, _npu_res)
+        from hfo_npu_embedder import get_embedding, find_similar
+
+        conn_ro = sqlite3.connect(f"file:{SSOT_DB}?mode=ro", uri=True)
+        conn_ro.row_factory = sqlite3.Row
+
+        query_vec = get_embedding(conn_ro, doc_id)
+        if query_vec is None:
+            conn_ro.close()
+            return None
+
+        similar = find_similar(conn_ro, query_vec, top_k=5, min_score=threshold)
+        for r in similar:
+            if r["doc_id"] == doc_id:
+                continue
+            row = conn_ro.execute(
+                "SELECT bluf FROM documents WHERE id = ? "
+                "AND bluf IS NOT NULL AND bluf != '' AND bluf != '---' AND LENGTH(bluf) > 20",
+                (r["doc_id"],),
+            ).fetchone()
+            if row:
+                conn_ro.close()
+                return row[0]
+
+        conn_ro.close()
+    except Exception:
+        pass
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════
 # P6 KRAKEN KEEPER — Core Enrichment Engine
 # ═══════════════════════════════════════════════════════════════
 
@@ -301,11 +452,121 @@ RULES:
 """
 
 
+# ═══════════════════════════════════════════════════════════════
+# NPU LLM BACKEND — openvino_genai persistent pipeline (no GPU)
+# ═══════════════════════════════════════════════════════════════
+
+# Path to pre-downloaded INT4 NPU model (override via env var)
+NPU_LLM_MODEL_DIR = os.environ.get(
+    "P6_NPU_LLM_MODEL",
+    str(HFO_ROOT / ".hfo_models" / "npu_llm" / "qwen3-1.7b-int4-ov-npu")
+)
+_npu_pipeline = None          # lazy-loaded singleton
+_npu_pipeline_lock = __import__('threading').Lock()
+
+
+def _get_npu_pipeline():
+    """Return cached openvino_genai LLMPipeline, loading on first call."""
+    global _npu_pipeline
+    if _npu_pipeline is not None:
+        return _npu_pipeline
+    with _npu_pipeline_lock:
+        if _npu_pipeline is not None:   # double-checked locking
+            return _npu_pipeline
+        model_path = NPU_LLM_MODEL_DIR
+        if not os.path.isfile(os.path.join(model_path, "openvino_model.xml")):
+            return None   # model not downloaded yet
+        try:
+            import openvino_genai as ov_genai   # optional dependency
+            print(f"[NPU LLM] Loading {model_path} on NPU (one-time cold start)...")
+            t0 = __import__('time').time()
+            _npu_pipeline = ov_genai.LLMPipeline(model_path, "NPU")
+            elapsed = __import__('time').time() - t0
+            print(f"[NPU LLM] Ready — loaded in {elapsed:.1f}s")
+        except Exception as e:
+            print(f"[NPU LLM] Load failed: {e}")
+            _npu_pipeline = None
+    return _npu_pipeline
+
+
+def npu_llm_generate(prompt: str, max_new_tokens: int = 180) -> Optional[str]:
+    """
+    Generate text on the NPU via openvino_genai (zero GPU / zero Ollama).
+
+    Uses the persistent singleton pipeline — no reload overhead after first call.
+    Appends /no_think to suppress Qwen3 reasoning chains.
+    Sets repetition_penalty=1.3 to prevent token-loop failures seen on Meteor Lake NPU.
+    Returns None on any failure (or garbage output) so caller falls back to Ollama.
+    """
+    pipe = _get_npu_pipeline()
+    if pipe is None:
+        return None
+    try:
+        import openvino_genai as ov_genai
+        cfg = ov_genai.GenerationConfig()
+        cfg.max_new_tokens = max_new_tokens
+        cfg.repetition_penalty = 1.3  # prevents 'põe\npõe\n...' loops on NPU
+        # /no_think suppresses Qwen3 <think> reasoning block
+        result = pipe.generate(prompt + " /no_think", cfg)
+        clean = _strip_think_tags(str(result)).strip()
+        if not _npu_output_valid(clean):
+            print(f"[NPU LLM] output failed quality gate — falling back")
+            return None
+        return clean
+    except Exception as e:
+        print(f"[NPU LLM] generate error: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════
+
+
 def _strip_think_tags(text: str) -> str:
-    """Strip <think>...</think> blocks from deepseek-r1 output."""
+    """Strip <think>...</think> blocks from deepseek-r1 / Qwen3 output.
+    Handles both complete blocks and unclosed blocks (NPU hit max_new_tokens
+    mid-reasoning before writing the closing tag).
+    """
     import re
-    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Remove complete <think>...</think> blocks first
+    cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Remove any remaining incomplete <think> block (runs to end of string)
+    cleaned = re.sub(r"<think>.*$", "", cleaned, flags=re.DOTALL)
+    cleaned = cleaned.strip()
     return cleaned if cleaned else text.strip()
+
+
+def _npu_output_valid(text: str) -> bool:
+    """Quality gate: return False for looping, think-leaking, or near-empty NPU output.
+
+    Catches failure modes observed on Meteor Lake NPU:
+      1. Incomplete <think> block (token budget exhausted mid-reasoning)
+      2. Newline-separated token loops  (e.g. 'põe\npõe\npõe...' / 'apsed\n...')
+      3. Excessive line-level duplication (>60% duplicate lines)
+      4. Inline-repetition loops: same phrase repeated 5+ times without newlines
+         (catches Chinese CJK loops like '系统正在处理您的请求。请稍候。' repeated)
+    """
+    import re
+    if len(text) < 20:
+        return False
+    # Residual think tag after stripping (should be gone, but paranoia is free)
+    if re.search(r'<think>', text, re.IGNORECASE):
+        return False
+    # Newline-separated loop: same short token repeated 5+ times
+    if re.search(r'(.{1,25})\n\1\n\1\n\1\n\1', text):
+        return False
+    # High duplicate-line ratio
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if lines and len(set(lines)) / len(lines) < 0.4:  # >60% dupes
+        return False
+    # Inline-repetition loop: a substring of 10-40 chars repeated so many times
+    # it dominates the output (>40% of total text). Catches CJK phrase loops
+    # and space-separated repeating phrases without triggering on common terms.
+    for m in re.finditer(r'(.{10,40})', text):
+        phrase = m.group(1)
+        count = text.count(phrase)
+        if count >= 5 and (count * len(phrase)) > 0.4 * len(text):
+            return False
+    return True
 
 
 class KrakenKeeper:
@@ -322,9 +583,11 @@ class KrakenKeeper:
         self.stats = {
             "cycles": 0,
             "blufs_generated": 0,
+            "blufs_stolen_npu": 0,
             "ports_classified": 0,
             "doctypes_classified": 0,
             "lineage_edges_added": 0,
+            "npu_lineage_edges": 0,
             "errors": 0,
             "ollama_calls": 0,
             "start_time": datetime.now(timezone.utc).isoformat(),
@@ -379,16 +642,37 @@ class KrakenKeeper:
                     f"BLUF (1-3 sentences, no quotes, no markdown):"
                 )
 
-                raw_response = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda p=prompt: ollama_generate(p, system=KRAKEN_SYSTEM_PROMPT, model=self.model),
+                # ── NPU TRIAGE: steal BLUF from similar doc (zero GPU cost) ──
+                stolen = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda d=doc_id: npu_bluf_thief(d, threshold=0.88)
                 )
-                self.stats["ollama_calls"] += 1
-
-                bluf = _strip_think_tags(raw_response)
-                if not bluf or len(bluf) < 10:
-                    results["errors"] += 1
-                    continue
+                if stolen:
+                    bluf = stolen
+                    self.stats["blufs_stolen_npu"] += 1
+                    print(f"  [NPU THIEF] doc {doc_id}: BLUF stolen from similar doc (0 GPU)")
+                else:
+                    # ── NPU LLM: generate with openvino_genai (no GPU) ────────
+                    npu_result = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda p=prompt: npu_llm_generate(p)
+                    )
+                    if npu_result:
+                        bluf = npu_result
+                        self.stats["npu_llm_calls"] = self.stats.get("npu_llm_calls", 0) + 1
+                        print(f"  [NPU LLM] doc {doc_id}: BLUF generated on NPU (0 GPU)")
+                    else:
+                        # ── VRAM GOVERNOR: Ollama fallback (GPU last resort) ──
+                        active_model = vram_governor()
+                        raw_response = await asyncio.get_event_loop().run_in_executor(
+                            None,
+                            lambda p=prompt, m=active_model: ollama_generate(
+                                p, system=KRAKEN_SYSTEM_PROMPT, model=m, keep_alive="0s"
+                            ),
+                        )
+                        self.stats["ollama_calls"] += 1
+                        bluf = _strip_think_tags(raw_response)
+                        if not bluf or len(bluf) < 10:
+                            results["errors"] += 1
+                            continue
 
                 # Truncate excessively long BLUFs
                 if len(bluf) > 500:
@@ -789,6 +1073,129 @@ class KrakenKeeper:
 
         return results
 
+    # ── T7: NPU LINEAGE MINING ─────────────────────────────────
+
+    async def npu_lineage_mine(self) -> dict:
+        """
+        Build SSOT lineage edges using NPU cosine similarity — zero GPU cost.
+
+        Replaces the LLM-based T4 approach for high-volume lineage discovery:
+          1. Find docs with no existing lineage edges (up to batch_size * 3)
+          2. Use stored NPU embeddings to find top-5 similar docs per doc
+          3. Insert lineage edge for any pair with cosine > 0.65
+
+        This runs entirely on NPU ONNX cosine math — no Ollama calls.
+        T4 LLM lineage still runs for richer semantic cross-referencing.
+        """
+        results = {"edges_added": 0, "docs_scanned": 0, "skipped": 0, "errors": 0}
+        try:
+            _npu_res = str(HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources")
+            if _npu_res not in sys.path:
+                sys.path.insert(0, _npu_res)
+            from hfo_npu_embedder import get_embedding, find_similar
+        except ImportError:
+            results["errors"] = 1
+            return results  # OpenVINO not available — skip silently
+
+        try:
+            conn_ro = sqlite3.connect(f"file:{SSOT_DB}?mode=ro", uri=True)
+            conn_ro.row_factory = sqlite3.Row
+
+            # Docs with fewest lineage edges (prioritise orphans)
+            doc_rows = conn_ro.execute(
+                """
+                SELECT d.id FROM documents d
+                LEFT JOIN lineage l ON d.id = l.doc_id
+                GROUP BY d.id
+                HAVING COUNT(l.doc_id) = 0
+                ORDER BY RANDOM()
+                LIMIT ?
+                """,
+                (self.batch_size * 3,),
+            ).fetchall()
+            conn_ro.close()
+        except Exception as e:
+            results["errors"] += 1
+            print(f"  [T7 QUERY ERROR] {e}", file=sys.stderr)
+            return results
+
+        NPU_LINEAGE_THRESHOLD = 0.65
+
+        for row in doc_rows:
+            if not self._running:
+                break
+            doc_id = row[0]
+            results["docs_scanned"] += 1
+
+            try:
+                conn_ro = sqlite3.connect(f"file:{SSOT_DB}?mode=ro", uri=True)
+                conn_ro.row_factory = sqlite3.Row
+                query_vec = get_embedding(conn_ro, doc_id)
+                if query_vec is None:
+                    conn_ro.close()
+                    results["skipped"] += 1
+                    continue
+
+                similar = find_similar(
+                    conn_ro, query_vec, top_k=6, min_score=NPU_LINEAGE_THRESHOLD
+                )
+                conn_ro.close()
+
+                for s in similar:
+                    if s["doc_id"] == doc_id:
+                        continue
+                    target_id = s["doc_id"]
+                    score = round(s["score"], 4)
+
+                    if not self.dry_run:
+                        try:
+                            wconn = get_db_readwrite()
+                            # Use content_hash of target for lineage table
+                            target_hash = wconn.execute(
+                                "SELECT content_hash FROM documents WHERE id = ?",
+                                (target_id,),
+                            ).fetchone()
+                            if target_hash and target_hash[0]:
+                                existing = wconn.execute(
+                                    "SELECT 1 FROM lineage WHERE doc_id = ? AND depends_on_hash = ?",
+                                    (doc_id, target_hash[0]),
+                                ).fetchone()
+                                if not existing:
+                                    wconn.execute(
+                                        "INSERT INTO lineage (doc_id, depends_on_hash, relation) VALUES (?, ?, ?)",
+                                        (doc_id, target_hash[0], f"npu_similarity:{score}"),
+                                    )
+                                    wconn.commit()
+                                    results["edges_added"] += 1
+                                    self.stats["lineage_edges_added"] += 1
+                            wconn.close()
+                        except Exception:
+                            pass
+
+            except Exception as e:
+                results["errors"] += 1
+                print(f"  [T7 DOC ERROR] doc {doc_id}: {e}", file=sys.stderr)
+
+        if results["edges_added"] > 0 and not self.dry_run:
+            try:
+                wconn = get_db_readwrite()
+                write_stigmergy_event(
+                    wconn, "hfo.gen89.kraken.npu_lineage",
+                    f"NPU_LINEAGE:batch_{results['docs_scanned']}",
+                    {
+                        "docs_scanned": results["docs_scanned"],
+                        "edges_added": results["edges_added"],
+                        "threshold": NPU_LINEAGE_THRESHOLD,
+                        "task": "T7_NPU_LINEAGE",
+                    },
+                )
+                wconn.close()
+            except Exception:
+                pass
+
+        print(f"  [T7:NPU-LINEAGE] scanned={results['docs_scanned']} edges={results['edges_added']} errs={results['errors']}")
+        return results
+
     # ── T5: STIGMERGY ROLLUP ─────────────────────────────────
 
     async def rollup_stigmergy(self) -> dict:
@@ -1100,6 +1507,11 @@ async def daemon_loop(
             r = await kraken.rollup_stigmergy()
             print(f"    Rollups created: {r['rollups_created']}, Errors: {r['errors']}\n")
 
+        if "npu_lineage" in enabled_tasks:
+            print("  --- T7: NPU Lineage Mining ---")
+            r = await kraken.npu_lineage_mine()
+            print(f"    Edges added: {r['edges_added']}, Scanned: {r['docs_scanned']}\n")
+
         hb = await kraken.emit_heartbeat()
         progress = hb.get("progress", {})
         print("  --- Final Progress ---")
@@ -1124,6 +1536,8 @@ async def daemon_loop(
         tasks.append(task_loop("T4:LINEAGE", kraken.mine_lineage, intervals.get("lineage", 600), kraken))
     if "rollup" in enabled_tasks:
         tasks.append(task_loop("T6:ROLLUP", kraken.rollup_stigmergy, intervals.get("rollup", 3600), kraken))
+    if "npu_lineage" in enabled_tasks:
+        tasks.append(task_loop("T7:NPU-LINEAGE", kraken.npu_lineage_mine, intervals.get("npu_lineage", 900), kraken))
     # Heartbeat always runs
     tasks.append(task_loop("T5:HEARTBEAT", kraken.emit_heartbeat, intervals.get("heartbeat", 60), kraken))
 
@@ -1191,8 +1605,8 @@ Examples:
     )
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--dry-run", action="store_true", help="No writes, just show targets")
-    parser.add_argument("--tasks", type=str, default="bluf,port,doctype,lineage,rollup",
-                        help="Comma-separated tasks: bluf,port,doctype,lineage,rollup")
+    parser.add_argument("--tasks", type=str, default="bluf,port,doctype,lineage,rollup,npu_lineage",
+                        help="Comma-separated tasks: bluf,port,doctype,lineage,rollup,npu_lineage")
     parser.add_argument("--model", type=str, default=P6_MODEL, help=f"Ollama model (default: {P6_MODEL})")
     parser.add_argument("--batch-size", type=int, default=3, help="Docs per task cycle (default: 3)")
     parser.add_argument("--bluf-interval", type=float, default=120, help="BLUF cycle interval (seconds)")
@@ -1200,6 +1614,7 @@ Examples:
     parser.add_argument("--doctype-interval", type=float, default=300, help="DocType cycle interval (seconds)")
     parser.add_argument("--lineage-interval", type=float, default=600, help="Lineage cycle interval (seconds)")
     parser.add_argument("--rollup-interval", type=float, default=3600, help="Rollup cycle interval (seconds)")
+    parser.add_argument("--npu-lineage-interval", type=float, default=900, help="NPU lineage cycle interval in seconds (default 15 min)")
     parser.add_argument("--status", action="store_true", help="Show enrichment progress and exit")
     parser.add_argument("--json", action="store_true", help="Output in JSON")
 
@@ -1270,8 +1685,24 @@ Examples:
         "doctype": args.doctype_interval,
         "lineage": args.lineage_interval,
         "rollup": args.rollup_interval,
+        "npu_lineage": args.npu_lineage_interval,
         "heartbeat": 60,
     }
+
+    # Resource governor — start background VRAM / RAM monitor
+    if _RESOURCE_GOVERNOR_AVAILABLE and not args.dry_run:
+        _start_rg_monitor(interval_s=30.0)
+        snap = _get_resource_snapshot()
+        if snap is not None:
+            print(
+                f"  [RESOURCE GOV] VRAM {snap.vram_used_gb:.1f}/{_VRAM_BUDGET_GB:.1f} GB  "
+                f"RAM {snap.ram_used_pct:.0f}%  "
+                f"GPU gate: {'GO' if snap.safe_to_infer_gpu else 'HOLD — ' + snap.throttle_reason}",
+                file=sys.stderr,
+            )
+            if not snap.safe_to_infer_gpu:
+                print("  [RESOURCE GOV] Evicting idle Ollama models to free headroom...", file=sys.stderr)
+                _evict_ollama(verbose=True)
 
     # Signal handling
     def handle_signal(signum, frame):

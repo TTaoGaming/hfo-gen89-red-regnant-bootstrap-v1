@@ -85,6 +85,10 @@
       "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_prey8_mcp_server.py",
       "desc": "PREY8 MCP server — structurally enforced P-R-E-Y loop (9 tools)"
     },
+    "resource.governor": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_resource_governor.py",
+      "desc": "Resource Governor — hard 80% GPU ceiling, VRAM backpressure, swap monitoring for background daemons"
+    },
     "agent.p4_red_regnant": {
       "path": ".github/agents/hfo_gen_89_p4_red_regent_bootstrap_v1.agent.md",
       "desc": "P4 Red Regnant custom agent definition for VS Code Copilot"

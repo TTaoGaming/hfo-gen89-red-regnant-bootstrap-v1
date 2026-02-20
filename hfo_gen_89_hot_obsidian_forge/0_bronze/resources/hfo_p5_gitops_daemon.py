@@ -203,7 +203,15 @@ class GitOpsDaemon:
 
         # 3. Pull rebase
         print("  [+] Pulling remote changes...")
+        # Stash unstaged changes before pulling
+        stash_code, stash_out, stash_err = self.run_cmd(["git", "stash", "push", "-m", "gitops_auto_stash"])
+        stashed = stash_code == 0 and "No local changes to save" not in stash_out
+
         code, out, err = self.run_cmd(["git", "pull", "--rebase"])
+        
+        if stashed:
+            self.run_cmd(["git", "stash", "pop"])
+
         if code != 0:
             report["errors"].append(f"git pull failed: {out} {err}")
             report["status"] = "pull_error"

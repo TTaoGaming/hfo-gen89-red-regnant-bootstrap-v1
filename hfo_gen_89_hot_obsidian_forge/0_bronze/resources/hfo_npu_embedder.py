@@ -751,8 +751,10 @@ def _cli_search(args):
     print(f"  Top {len(results)} results for: '{args.query}'")
     print()
     for r in results:
-        print(f"  [{r['score']:.4f}] doc {r['doc_id']:5d} | {r.get('port','?'):3s} | "
-              f"{r.get('title','?')[:60]}")
+        port_str = r.get('port') or '?'
+        title_str = r.get('title') or '?'
+        print(f"  [{r['score']:.4f}] doc {r['doc_id']:5d} | {port_str:3s} | "
+              f"{title_str[:60]}")
         if r.get("bluf"):
             print(f"           {r['bluf'][:100]}")
     if not results:

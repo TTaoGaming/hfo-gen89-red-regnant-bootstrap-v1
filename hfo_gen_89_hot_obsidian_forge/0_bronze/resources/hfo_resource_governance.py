@@ -91,6 +91,14 @@ try:
 except ImportError:
     HAS_OPENVINO = False
 
+try:
+    from hfo_ssot_write import write_stigmergy_event, build_signal_metadata
+    HAS_CANONICAL_WRITE = True
+except ImportError:
+    HAS_CANONICAL_WRITE = False
+    write_stigmergy_event = None  # type: ignore
+    build_signal_metadata = None  # type: ignore
+
 
 # ── Path resolution ──
 
@@ -476,37 +484,46 @@ class ResourceSampler:
 # ═══════════════════════════════════════════════════════════════
 
 def _write_gov_event(event_type: str, subject: str, data: dict) -> Optional[str]:
-    """Write a governance event to SSOT."""
-    try:
-        conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+    """Write a governance event to SSOT via canonical write_stigmergy_event."""
+    if not HAS_CANONICAL_WRITE or write_stigmergy_event is None:
+        # Fallback: raw insert without signal_metadata (pre-upgrade path)
+        try:
+            conn = sqlite3.connect(str(SSOT_DB), timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            now = datetime.now(timezone.utc).isoformat()
+            content_hash = hashlib.sha256(
+                f"{event_type}:{subject}:{time.time()}".encode()
+            ).hexdigest()
+            conn.execute(
+                """INSERT OR IGNORE INTO stigmergy_events
+                   (event_type, timestamp, subject, source, data_json, content_hash)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (event_type, now, subject, GOV_SOURCE, json.dumps(data), content_hash),
+            )
+            conn.commit()
+            conn.close()
+            return content_hash[:12]
+        except Exception as e:
+            print(f"  [GOV] Stigmergy write failed (fallback): {e}", file=sys.stderr)
+            return None
 
-        event_id = hashlib.md5(
-            f"{event_type}{time.time()}{secrets.token_hex(4)}".encode()
-        ).hexdigest()
-        now = datetime.now(timezone.utc).isoformat()
-        event = {
-            "specversion": "1.0",
-            "id": event_id,
-            "type": event_type,
-            "source": GOV_SOURCE,
-            "subject": subject,
-            "time": now,
-            "data": data,
-        }
-        content_hash = hashlib.sha256(
-            json.dumps(event, sort_keys=True).encode()
-        ).hexdigest()
-        conn.execute(
-            """INSERT OR IGNORE INTO stigmergy_events
-               (event_type, timestamp, subject, source, data_json, content_hash)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (event_type, now, subject, GOV_SOURCE, json.dumps(event), content_hash),
+    try:
+        sig_meta = build_signal_metadata(
+            port="P6",
+            model_id="governance",
+            daemon_name="resource_governance",
+            daemon_version="v1.0",
+            task_type=event_type.split(".")[-1],
         )
-        conn.commit()
-        conn.close()
-        return event_id
+        row_id = write_stigmergy_event(
+            event_type=event_type,
+            subject=subject,
+            data=data,
+            signal_metadata=sig_meta,
+            source=GOV_SOURCE,
+        )
+        return str(row_id) if row_id else None
     except Exception as e:
         print(f"  [GOV] Stigmergy write failed: {e}", file=sys.stderr)
         return None

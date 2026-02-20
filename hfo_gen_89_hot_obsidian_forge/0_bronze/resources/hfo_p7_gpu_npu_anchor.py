@@ -89,6 +89,14 @@ try:
 except ImportError:
     HAS_HTTPX = False
 
+try:
+    from hfo_ssot_write import write_stigmergy_event, build_signal_metadata
+    HAS_CANONICAL_WRITE = True
+except ImportError:
+    HAS_CANONICAL_WRITE = False
+    write_stigmergy_event = None  # type: ignore
+    build_signal_metadata = None  # type: ignore
+
 
 # ═══════════════════════════════════════════════════════════════
 # § 0  PATH RESOLUTION (PAL)
@@ -180,6 +188,27 @@ def get_db_rw() -> sqlite3.Connection:
 
 def write_event(conn: sqlite3.Connection, event_type: str, subject: str,
                 data: dict) -> int:
+    """Write anchor event to SSOT via canonical write_stigmergy_event."""
+    if HAS_CANONICAL_WRITE and write_stigmergy_event is not None:
+        try:
+            sig_meta = build_signal_metadata(
+                port="P7",
+                model_id="governance",
+                daemon_name="gpu_npu_anchor",
+                daemon_version="v1.0",
+                task_type=event_type.split(".")[-1],
+            )
+            return write_stigmergy_event(
+                event_type=event_type,
+                subject=subject,
+                data=data,
+                signal_metadata=sig_meta,
+                source=SOURCE_TAG,
+                conn=conn,
+            )
+        except Exception:
+            pass  # fall through to raw insert
+    # Fallback: raw insert (no signal_metadata, will warn on structural gate)
     now = datetime.now(timezone.utc).isoformat()
     payload = json.dumps(data, default=str)
     content_hash = hashlib.sha256(
