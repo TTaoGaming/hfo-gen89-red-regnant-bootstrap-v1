@@ -228,8 +228,7 @@ class GitOpsDaemon:
                 port=DAEMON_PORT,
                 model_id="gitops",
                 daemon_name=DAEMON_NAME,
-                daemon_version=DAEMON_VERSION,
-                model_provider="system"
+                daemon_version=DAEMON_VERSION
             )
             write_stigmergy_event(
                 EVENT_TYPE_GITOPS,
@@ -248,8 +247,7 @@ class GitOpsDaemon:
                 port=DAEMON_PORT,
                 model_id="gitops",
                 daemon_name=DAEMON_NAME,
-                daemon_version=DAEMON_VERSION,
-                model_provider="system"
+                daemon_version=DAEMON_VERSION
             )
             write_stigmergy_event(
                 EVENT_TYPE_ERROR,
