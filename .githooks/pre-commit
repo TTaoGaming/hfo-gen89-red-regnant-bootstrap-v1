@@ -75,30 +75,40 @@ if [ $ERRORS -eq 0 ]; then
 fi
 
 # ── 3. Medallion Boundary ────────────────────────────────────
-# Bronze cannot write to silver/gold/hfo directly
-# (This is a soft gate — warns but doesn't block in cold start)
+# DENY-BY-DEFAULT: Bronze must not write to Silver/Gold/Hyper layers.
+# Any staged change under those directories is a hard failure.
 for f in $STAGED_FILES; do
     case "$f" in
         *1_silver/*|*2_gold/*|*3_hyper_fractal_obsidian/*)
-            # Allow the SSOT database and .gitkeep
-            case "$f" in
-                *.sqlite|*.gitkeep|*hfo_legendary_commanders_invariants*)
-                    ;;
-                *)
-                    echo "${YELLOW}⚠ MEDALLION CROSSING:${NC} $f — direct write to non-bronze layer"
-                    echo "  Ensure this was promoted through a validation gate."
-                    ;;
-            esac
+            echo "${RED}✗ MEDALLION VIOLATION:${NC} $f — direct write to non-bronze layer is prohibited"
+            echo "  Move your changes to hfo_gen_89_hot_obsidian_forge/0_bronze/ and follow promotion gates."
+            ERRORS=$((ERRORS + 1))
             ;;
     esac
 done
 
-# ── 4. Large File Warning ────────────────────────────────────
+# ── 4. Large File Gate (FAIL CLOSED) ──────────────────────────
+# Reject any new or modified file larger than 10 MB unless handled via LFS/outside git.
 for f in $STAGED_FILES; do
     if [ -f "$f" ]; then
         size=$(wc -c < "$f" 2>/dev/null || echo 0)
         if [ "$size" -gt 10485760 ]; then
-            echo "${YELLOW}⚠ LARGE FILE:${NC} $f ($(($size / 1048576)) MB) — consider Git LFS"
+            echo "${RED}✗ LARGE FILE VIOLATION:${NC} $f ($(($size / 1048576)) MB) — files >10MB are blocked. Use Git LFS or external storage."
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+done
+
+# ── 5. Content Scanning for Private Keys / PEMs ───────────────
+# Immediately block any staged content that contains private key material.
+KEY_PATTERNS='-----BEGIN (RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----|-----BEGIN CERTIFICATE-----|PRIVATE KEY' 
+for f in $STAGED_FILES; do
+    # Skip binary blobs check if file missing in worktree
+    if [ -f "$f" ]; then
+        CONTENT_ADDS=$(git diff --cached --diff-filter=ACM -p -- "$f" 2>/dev/null | grep '^+' | grep -v '^+++' || true)
+        if echo "$CONTENT_ADDS" | grep -qE "$KEY_PATTERNS"; then
+            echo "${RED}✗ PRIVATE KEY DETECTED:${NC} $f contains key/certificate material"
+            ERRORS=$((ERRORS + 1))
         fi
     fi
 done

@@ -35,10 +35,27 @@ Thumbs.db
 .DS_Store
 desktop.ini
 
+# ── Root scratch scripts (operator one-offs, never commit) ───
+/_*.py
+
+# ── Root state/output files ─────────────────────────────────
+/*.txt
+/*.sqlite
+.hfo_*.json
+.p7_*.json
+.hfo_models/
+
+# ── Daemon runtime state files ──────────────────────────────
+.prey8_session_state.json
+.prey8_session_*.json
+.watchdog_watermark.json
+--reap
+
 # ── Ephemeral artifacts (never commit temp outputs) ──────────
 artifacts/tmp/
 *.log
 temp/
+fleet_monitor_run*.log
 
 # ── SQLite WAL/SHM (DB itself IS committed) ─────────────────
 *.sqlite-wal

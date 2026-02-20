@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """
-hfo_prey8_mcp_server.py — PREY8 Loop MCP Server v3 (P4 Red Regnant)
+hfo_prey8_mcp_server.py — PREY8 Loop MCP Server v4 (P4 Red Regnant)
+
+Swarm-aware multi-agent PREY8 with agent identity, session isolation,
+deny-by-default authorization, and stigmergy traceability.
+
+v4.0 upgrades from v3.0 single-tenant:
+  - AGENT_REGISTRY: mandatory agent_id on all gated tools (deny-by-default)
+  - Per-agent session isolation: _sessions dict keyed by agent_id
+  - Per-agent state files: .prey8_session_{agent_id}.json
+  - Agent_id in ALL CloudEvents for traceability
+  - Port-pair authorization: agents only use tools assigned to their ports
+  - Least privilege: unknown agent_id = GATE_BLOCKED
 
 Fail-closed port-pair gates on every PREY8 step:
   P — Perceive  = P0 OBSERVE + P6 ASSIMILATE  (sensing + memory)
@@ -9,22 +20,23 @@ Fail-closed port-pair gates on every PREY8 step:
   Y — Yield     = P3 INJECT + P5 IMMUNIZE     (delivery + Stryker-style testing)
 
 Gate enforcement:
-  - Each step has MANDATORY structured fields tied to its octree port pair
-  - Missing or empty fields = GATE_BLOCKED = bricked agent (cannot proceed)
-  - No SSOT write occurs when a gate blocks — the agent must retry with proper fields
-  - The agent cannot hallucinate past a gate; it must supply structured evidence
+  1. Agent identity check (deny-by-default: unknown agent = BLOCKED)
+  2. Port authorization check (agent must have permission for this gate)
+  3. Structured field check (all required fields must be non-empty)
+  Missing any check = GATE_BLOCKED = bricked agent (cannot proceed)
 
 Tamper-evident hash chain (from v2):
   - chain_hash = SHA256(parent_chain_hash : nonce : event_data)
   - Each tile references its parent's hash (Merkle-like)
-  - Missing tiles = memory loss = automatically detected and recorded
+  - agent_id embedded in chain = identity is tamper-evident
 
 Design sources from SSOT:
   - Doc 129: PREY8 <-> Port mapping (P0+P6, P1+P7, P2+P4, P3+P5)
+  - Doc 4:   6-Defense SDD Stack (Defense 2: structural separation requires agent_id)
+  - Doc 52:  Feasibility Assessment (L8+L5 gap: unified P5 enforcement = deny-by-default)
   - Doc 317: Meadows 12 Leverage Levels synthesis
   - Doc 128: Powerword Spellbook (port workflows)
   - Doc 12:  SBE Towers Pattern (5-part: invariant, happy-path, juice, perf, lifecycle)
-  - Doc 4:   6-Defense SDD Stack (red-first, structural sep, mutation wall, props, GRUDGE, review)
   - Doc 263: P2-P5 Safety Spine
 
 MCP server protocol: stdio
@@ -62,24 +74,234 @@ def _find_root() -> Path:
 
 HFO_ROOT = _find_root()
 DB_PATH = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "2_gold" / "resources" / "hfo_gen89_ssot.sqlite"
-SESSION_STATE_PATH = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources" / ".prey8_session_state.json"
+SESSION_STATE_DIR = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources"
+# Legacy single-file path for backward compat detection
+SESSION_STATE_PATH = SESSION_STATE_DIR / ".prey8_session_state.json"
 GEN = os.environ.get("HFO_GENERATION", "89")
 OPERATOR = os.environ.get("HFO_OPERATOR", "TTAO")
 SECRET = os.environ.get("HFO_SECRET", "prey8_mcp_default_secret")
-SERVER_VERSION = "v3.0"
+SERVER_VERSION = "v4.0"
 SOURCE_TAG = f"hfo_prey8_mcp_gen{GEN}_{SERVER_VERSION}"
 
-# In-memory session state (also persisted to disk)
-_session = {
-    "session_id": None,        # UUID for this PREY8 session
-    "perceive_nonce": None,
-    "react_token": None,
-    "execute_tokens": [],
-    "phase": "idle",           # idle -> perceived -> reacted -> executing -> yielded
-    "chain": [],               # Ordered list of {step, nonce, chain_hash, stigmergy_row_id}
-    "started_at": None,
-    "memory_loss_count": 0,    # How many memory losses detected this server lifetime
+
+# ---------------------------------------------------------------------------
+# AGENT REGISTRY — Deny-by-Default Authorization
+# ---------------------------------------------------------------------------
+# Every agent MUST be registered here to use gated tools.
+# Unknown agent_id = GATE_BLOCKED. No exceptions.
+#
+# Port permissions define which PREY8 gates an agent can use:
+#   PERCEIVE = P0+P6, REACT = P1+P7, EXECUTE = P2+P4, YIELD = P3+P5
+#
+# "all" means the agent can use all 4 gates (full PREY8 loop).
+# Specific port lists restrict to gates matching those ports.
+#
+# Design principle: least privilege — agents get minimum needed permissions.
+# From Doc 4 Defense 2: structural separation requires different agent identities.
+# From Doc 52: "before ANY agent does ANYTHING, P5 must approve."
+
+AGENT_REGISTRY = {
+    # ---- Legendary Commanders (one per port) ----
+    "p0_lidless_legion": {
+        "display_name": "P0 Lidless Legion (OBSERVE)",
+        "ports": [0, 6],
+        "allowed_gates": ["PERCEIVE"],
+        "role": "Sensing under contest — read-only scout",
+    },
+    "p1_web_weaver": {
+        "display_name": "P1 Web Weaver (BRIDGE)",
+        "ports": [1, 7],
+        "allowed_gates": ["REACT"],
+        "role": "Shared data fabric — cross-reference bridging",
+    },
+    "p2_mirror_magus": {
+        "display_name": "P2 Mirror Magus (SHAPE)",
+        "ports": [2, 4],
+        "allowed_gates": ["EXECUTE"],
+        "role": "Creation / code generation — shapes artifacts",
+    },
+    "p3_harmonic_hydra": {
+        "display_name": "P3 Harmonic Hydra (INJECT)",
+        "ports": [3, 5],
+        "allowed_gates": ["YIELD"],
+        "role": "Payload delivery — inject artifacts into system",
+    },
+    "p4_red_regnant": {
+        "display_name": "P4 Red Regnant (DISRUPT)",
+        "ports": [0, 1, 2, 3, 4, 5, 6, 7],
+        "allowed_gates": ["PERCEIVE", "REACT", "EXECUTE", "YIELD"],
+        "role": "Adversarial testing — full PREY8 loop access for red team",
+    },
+    "p5_pyre_praetorian": {
+        "display_name": "P5 Pyre Praetorian (IMMUNIZE)",
+        "ports": [0, 1, 2, 3, 4, 5, 6, 7],
+        "allowed_gates": ["PERCEIVE", "REACT", "EXECUTE", "YIELD"],
+        "role": "Blue team / gates — full PREY8 loop for enforcement",
+    },
+    "p6_kraken_keeper": {
+        "display_name": "P6 Kraken Keeper (ASSIMILATE)",
+        "ports": [0, 6],
+        "allowed_gates": ["PERCEIVE"],
+        "role": "Learning / memory — ingestion and recall",
+    },
+    "p7_spider_sovereign": {
+        "display_name": "P7 Spider Sovereign (NAVIGATE)",
+        "ports": [0, 1, 2, 3, 4, 5, 6, 7],
+        "allowed_gates": ["PERCEIVE", "REACT", "EXECUTE", "YIELD"],
+        "role": "C2 / steering — full PREY8 loop for orchestration",
+    },
+    # ---- Swarm agent types (from hfo_swarm_agents.py) ----
+    "swarm_triage": {
+        "display_name": "Swarm Triage Agent",
+        "ports": [0, 7],
+        "allowed_gates": ["PERCEIVE", "REACT"],
+        "role": "Routes requests — perceive + react only",
+    },
+    "swarm_research": {
+        "display_name": "Swarm Research Agent",
+        "ports": [0, 1, 6],
+        "allowed_gates": ["PERCEIVE", "REACT"],
+        "role": "Web search and synthesis — observe + bridge",
+    },
+    "swarm_coder": {
+        "display_name": "Swarm Coder Agent",
+        "ports": [2, 4],
+        "allowed_gates": ["EXECUTE"],
+        "role": "Code generation — shape + disrupt only",
+    },
+    "swarm_analyst": {
+        "display_name": "Swarm Analyst Agent",
+        "ports": [0, 1, 6, 7],
+        "allowed_gates": ["PERCEIVE", "REACT"],
+        "role": "Data analysis — observe + bridge + navigate",
+    },
+    # ---- Operator / TTAO (human) — full access ----
+    "ttao_operator": {
+        "display_name": "TTAO Operator (Human)",
+        "ports": [0, 1, 2, 3, 4, 5, 6, 7],
+        "allowed_gates": ["PERCEIVE", "REACT", "EXECUTE", "YIELD"],
+        "role": "Human operator — unrestricted access",
+    },
+    # ---- Daemon watchdog (read-only, no gated tools) ----
+    "watchdog_daemon": {
+        "display_name": "Stigmergy Watchdog Daemon",
+        "ports": [0, 5],
+        "allowed_gates": [],
+        "role": "Stigmergy monitoring — utility tools only, no gated access",
+    },
 }
+
+
+def _new_session() -> dict:
+    """Create a fresh per-agent session state dict."""
+    return {
+        "session_id": None,
+        "perceive_nonce": None,
+        "react_token": None,
+        "execute_tokens": [],
+        "phase": "idle",
+        "chain": [],
+        "started_at": None,
+        "memory_loss_count": 0,
+        "agent_id": None,
+    }
+
+
+# Per-agent session state (keyed by agent_id)
+_sessions: dict[str, dict] = {}
+
+
+def _get_session(agent_id: str) -> dict:
+    """Get or create a session for the given agent. No authorization check here."""
+    if agent_id not in _sessions:
+        _sessions[agent_id] = _new_session()
+        _sessions[agent_id]["agent_id"] = agent_id
+    return _sessions[agent_id]
+
+
+def _validate_agent(agent_id: str, gate_name: str = None) -> Optional[dict]:
+    """
+    Deny-by-default agent authorization.
+    Returns None if agent is authorized, or a GATE_BLOCKED dict if not.
+
+    Checks:
+      1. agent_id is non-empty
+      2. agent_id exists in AGENT_REGISTRY
+      3. If gate_name provided, agent is allowed to use that gate
+    """
+    if not agent_id or not agent_id.strip():
+        block_data = {
+            "reason": "DENY_BY_DEFAULT: agent_id is required",
+            "agent_id": "",
+            "gate": gate_name or "pre-gate",
+            "timestamp": _now_iso(),
+            "server_version": SERVER_VERSION,
+        }
+        block_event = _cloudevent(
+            f"hfo.gen{GEN}.prey8.gate_blocked",
+            block_data,
+            "prey-agent-denied",
+        )
+        _write_stigmergy(block_event)
+        return {
+            "status": "GATE_BLOCKED",
+            "reason": "DENY_BY_DEFAULT: agent_id is required. Every tool call must include a registered agent_id.",
+            "registered_agents": list(AGENT_REGISTRY.keys()),
+            "bricked": True,
+        }
+
+    agent_id = agent_id.strip().lower()
+    if agent_id not in AGENT_REGISTRY:
+        block_data = {
+            "reason": f"DENY_BY_DEFAULT: agent_id '{agent_id}' not in AGENT_REGISTRY",
+            "agent_id": agent_id,
+            "gate": gate_name or "pre-gate",
+            "timestamp": _now_iso(),
+            "server_version": SERVER_VERSION,
+        }
+        block_event = _cloudevent(
+            f"hfo.gen{GEN}.prey8.gate_blocked",
+            block_data,
+            "prey-agent-denied",
+        )
+        _write_stigmergy(block_event)
+        return {
+            "status": "GATE_BLOCKED",
+            "reason": f"DENY_BY_DEFAULT: agent_id '{agent_id}' is not registered. Must be one of: {list(AGENT_REGISTRY.keys())}",
+            "bricked": True,
+        }
+
+    if gate_name:
+        agent_spec = AGENT_REGISTRY[agent_id]
+        if gate_name not in agent_spec["allowed_gates"]:
+            block_data = {
+                "reason": f"LEAST_PRIVILEGE: agent '{agent_id}' not authorized for {gate_name} gate",
+                "agent_id": agent_id,
+                "gate": gate_name,
+                "allowed_gates": agent_spec["allowed_gates"],
+                "timestamp": _now_iso(),
+                "server_version": SERVER_VERSION,
+            }
+            block_event = _cloudevent(
+                f"hfo.gen{GEN}.prey8.gate_blocked",
+                block_data,
+                "prey-agent-denied",
+            )
+            _write_stigmergy(block_event)
+            return {
+                "status": "GATE_BLOCKED",
+                "reason": (
+                    f"LEAST_PRIVILEGE: agent '{agent_id}' ({agent_spec['display_name']}) "
+                    f"is not authorized for the {gate_name} gate. "
+                    f"Allowed gates: {agent_spec['allowed_gates']}."
+                ),
+                "agent_id": agent_id,
+                "agent_role": agent_spec["role"],
+                "allowed_gates": agent_spec["allowed_gates"],
+                "bricked": True,
+            }
+
+    return None
 
 # ---------------------------------------------------------------------------
 # Helpers — Crypto & Hashing
@@ -137,15 +359,21 @@ def _split_csv(s: str) -> list:
 def _get_conn():
     if not DB_PATH.exists():
         raise FileNotFoundError(f"SSOT database not found at {DB_PATH}")
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 
-def _cloudevent(event_type: str, data: dict, subject: str = "prey8") -> dict:
-    """Build a CloudEvent 1.0 envelope with signature."""
+def _cloudevent(event_type: str, data: dict, subject: str = "prey8",
+                agent_id: str = "") -> dict:
+    """Build a CloudEvent 1.0 envelope with signature and agent identity."""
     trace_id, span_id = _trace_ids()
     ts = _now_iso()
+    # Inject agent_id into event data for traceability
+    if agent_id:
+        data["agent_id"] = agent_id
     data_json = json.dumps(data, sort_keys=True)
     event = {
         "specversion": "1.0",
@@ -161,6 +389,7 @@ def _cloudevent(event_type: str, data: dict, subject: str = "prey8") -> dict:
         "traceparent": f"00-{trace_id}-{span_id}-01",
         "parent_span_id": None,
         "phase": "CLOUDEVENT",
+        "agent_id": agent_id,
         "data": data,
         "signature": _sign(data_json),
     }
@@ -193,43 +422,65 @@ def _write_stigmergy(event: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Session State Persistence (survives MCP restarts)
+# Session State Persistence (per-agent, survives MCP restarts)
 # ---------------------------------------------------------------------------
 
-def _save_session():
-    """Persist session state to disk. Every state change auto-saves."""
+def _session_state_path(agent_id: str) -> Path:
+    """Get the per-agent session state file path."""
+    safe_id = agent_id.replace("/", "_").replace("\\", "_").replace("..", "_")
+    return SESSION_STATE_DIR / f".prey8_session_{safe_id}.json"
+
+
+def _save_session(agent_id: str):
+    """Persist per-agent session state to disk. Every state change auto-saves."""
+    session = _get_session(agent_id)
     state = {
-        "session_id": _session["session_id"],
-        "perceive_nonce": _session["perceive_nonce"],
-        "react_token": _session["react_token"],
-        "execute_tokens": _session["execute_tokens"],
-        "phase": _session["phase"],
-        "chain": _session["chain"],
-        "started_at": _session["started_at"],
-        "memory_loss_count": _session["memory_loss_count"],
+        "session_id": session["session_id"],
+        "perceive_nonce": session["perceive_nonce"],
+        "react_token": session["react_token"],
+        "execute_tokens": session["execute_tokens"],
+        "phase": session["phase"],
+        "chain": session["chain"],
+        "started_at": session["started_at"],
+        "memory_loss_count": session["memory_loss_count"],
+        "agent_id": agent_id,
         "saved_at": _now_iso(),
         "server_version": SERVER_VERSION,
     }
     try:
-        SESSION_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        _session_state_path(agent_id).write_text(
+            json.dumps(state, indent=2), encoding="utf-8"
+        )
     except OSError:
         pass  # Non-fatal: disk persistence is best-effort
 
 
-def _load_session() -> dict:
-    """Load session state from disk. Returns the loaded state or None."""
-    if not SESSION_STATE_PATH.exists():
+def _load_session(agent_id: str) -> dict:
+    """Load per-agent session state from disk. Returns the loaded state or None."""
+    path = _session_state_path(agent_id)
+    if not path.exists():
+        # Also check legacy single-file path for backward compat
+        if agent_id == "p4_red_regnant" and SESSION_STATE_PATH.exists():
+            try:
+                raw = SESSION_STATE_PATH.read_text(encoding="utf-8")
+                return json.loads(raw)
+            except (OSError, json.JSONDecodeError):
+                return None
         return None
     try:
-        raw = SESSION_STATE_PATH.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8")
         return json.loads(raw)
     except (OSError, json.JSONDecodeError):
         return None
 
 
-def _clear_session_file():
-    """Remove persisted session state (after yield or memory loss recording)."""
+def _clear_session_file(agent_id: str):
+    """Remove per-agent persisted session state (after yield or memory loss recording)."""
     try:
+        path = _session_state_path(agent_id)
+        if path.exists():
+            path.unlink()
+        # Also clean up legacy file if it exists
         if SESSION_STATE_PATH.exists():
             SESSION_STATE_PATH.unlink()
     except OSError:
@@ -302,11 +553,12 @@ def _detect_memory_loss() -> list:
     return orphans
 
 
-def _record_memory_loss(orphan_data: dict, recovery_source: str):
+def _record_memory_loss(orphan_data: dict, recovery_source: str, agent_id: str = "unknown"):
     """Write a memory_loss CloudEvent to SSOT."""
     event_data = {
         "loss_type": "session_state_reset",
         "recovery_source": recovery_source,
+        "agent_id": agent_id,
         "orphaned_perceive_nonce": orphan_data.get("perceive_nonce", ""),
         "orphaned_session_id": orphan_data.get("session_id", ""),
         "orphaned_timestamp": orphan_data.get("timestamp", ""),
@@ -316,7 +568,7 @@ def _record_memory_loss(orphan_data: dict, recovery_source: str):
         "detection_timestamp": _now_iso(),
         "server_version": SERVER_VERSION,
         "diagnostic": (
-            "MCP server restarted or session state lost. "
+            f"MCP server restarted or session state lost for agent '{agent_id}'. "
             "The perceive event was written to SSOT but no matching yield was found. "
             "This indicates the agent session was interrupted without closing the PREY8 loop."
         ),
@@ -324,24 +576,26 @@ def _record_memory_loss(orphan_data: dict, recovery_source: str):
     event = _cloudevent(
         f"hfo.gen{GEN}.prey8.memory_loss",
         event_data,
-        subject="prey-memory-loss",
+        "prey-memory-loss",
+        agent_id=agent_id,
     )
     row_id = _write_stigmergy(event)
-    _session["memory_loss_count"] += 1
+    session = _get_session(agent_id)
+    session["memory_loss_count"] += 1
     return row_id
 
 
-def _check_and_recover_session():
+def _check_and_recover_session(agent_id: str):
     """
-    On server start / perceive: check for prior session state on disk.
+    On server start / perceive: check for prior session state on disk for this agent.
     If found with unclosed session, record memory loss and clean up.
     """
-    prior = _load_session()
+    prior = _load_session(agent_id)
     if not prior:
         return None
 
     if prior.get("phase") in ("idle", "yielded", None):
-        _clear_session_file()
+        _clear_session_file(agent_id)
         return None
 
     orphan_data = {
@@ -354,8 +608,8 @@ def _check_and_recover_session():
         "execute_steps_at_loss": len(prior.get("execute_tokens", [])),
     }
 
-    row_id = _record_memory_loss(orphan_data, recovery_source="disk")
-    _clear_session_file()
+    row_id = _record_memory_loss(orphan_data, recovery_source="disk", agent_id=agent_id)
+    _clear_session_file(agent_id)
 
     return {
         "memory_loss_recorded": True,
@@ -364,6 +618,7 @@ def _check_and_recover_session():
         "lost_phase": prior.get("phase", "unknown"),
         "lost_chain_length": len(prior.get("chain", [])),
         "stigmergy_row_id": row_id,
+        "agent_id": agent_id,
     }
 
 
@@ -414,13 +669,16 @@ GATE_SPECS = {
 }
 
 
-def _validate_gate(gate_name: str, fields: dict) -> Optional[dict]:
+def _validate_gate(gate_name: str, fields: dict, agent_id: str = "") -> Optional[dict]:
     """
     Validate that all required gate fields are non-empty.
     Returns None if valid, or a GATE_BLOCKED error dict if invalid.
 
     This is the fail-closed mechanism: missing/empty fields = bricked agent.
     No SSOT write occurs. The agent cannot hallucinate past a gate.
+
+    v4.0: Agent authorization is checked BEFORE this function by _validate_agent().
+    This function focuses on structural field validation.
     """
     spec = GATE_SPECS[gate_name]
     missing = []
@@ -445,14 +703,14 @@ def _validate_gate(gate_name: str, fields: dict) -> Optional[dict]:
                 empty.append(f"{field_name}(must be 0-100, got {value})")
 
     if missing or empty:
-        # Write a gate_blocked event to SSOT for observability
-        # (this is the only write that happens on failure — tracking the failure itself)
+        session = _get_session(agent_id) if agent_id else {"session_id": "pre-session"}
         block_data = {
             "gate": gate_name,
             "port_pair": spec["port_pair"],
             "missing_fields": missing,
             "empty_fields": empty,
-            "session_id": _session.get("session_id", "pre-session"),
+            "agent_id": agent_id,
+            "session_id": session.get("session_id", "pre-session"),
             "timestamp": _now_iso(),
             "server_version": SERVER_VERSION,
         }
@@ -460,6 +718,7 @@ def _validate_gate(gate_name: str, fields: dict) -> Optional[dict]:
             f"hfo.gen{GEN}.prey8.gate_blocked",
             block_data,
             "prey-gate-blocked",
+            agent_id=agent_id,
         )
         _write_stigmergy(block_event)
 
@@ -470,9 +729,10 @@ def _validate_gate(gate_name: str, fields: dict) -> Optional[dict]:
             "description": spec["description"],
             "missing_fields": missing,
             "empty_fields": empty,
+            "agent_id": agent_id,
             "bricked": True,
             "instruction": (
-                f"FAIL-CLOSED: {gate_name} gate blocked. "
+                f"FAIL-CLOSED: {gate_name} gate blocked for agent '{agent_id}'. "
                 f"Port pair {spec['port_pair']} requires all structured fields. "
                 f"Supply: {', '.join(missing + empty)} then retry. "
                 "This violation has been logged to SSOT."
@@ -485,13 +745,14 @@ def _validate_gate(gate_name: str, fields: dict) -> Optional[dict]:
 # MCP Server
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP("HFO PREY8 Red Regnant v3 — Fail-Closed Gates")
+mcp = FastMCP("HFO PREY8 Red Regnant v4 — Swarm-Aware Fail-Closed Gates")
 
 
 # ===== PERCEIVE — P0 OBSERVE + P6 ASSIMILATE =====
 
 @mcp.tool()
 def prey8_perceive(
+    agent_id: str,
     probe: str,
     observations: str,
     memory_refs: str,
@@ -529,6 +790,12 @@ def prey8_perceive(
         dict with: nonce, chain_hash, session_id, gate_receipt, context
         OR GATE_BLOCKED if structured fields are missing.
     """
+    # ---- v4.0: DENY-BY-DEFAULT AGENT AUTHORIZATION ----
+    agent_id = agent_id.strip().lower()
+    agent_block = _validate_agent(agent_id, "PERCEIVE")
+    if agent_block:
+        return agent_block
+
     # ---- FAIL-CLOSED GATE: P0 OBSERVE + P6 ASSIMILATE ----
     obs_list = _split_csv(observations)
     mem_list = _split_csv(memory_refs)
@@ -537,14 +804,14 @@ def prey8_perceive(
         "observations": obs_list,
         "memory_refs": mem_list,
         "stigmergy_digest": stigmergy_digest,
-    })
+    }, agent_id=agent_id)
     if gate_block:
         return gate_block
 
     # ---- Gate passed — proceed with perceive ----
 
-    # Check for memory loss from prior sessions
-    recovery_info = _check_and_recover_session()
+    # Check for memory loss from prior sessions (per-agent)
+    recovery_info = _check_and_recover_session(agent_id)
     orphans = _detect_memory_loss()
 
     conn = _get_conn()
@@ -570,6 +837,7 @@ def prey8_perceive(
                     "summary": yield_data.get("summary", ""),
                     "artifacts": yield_data.get("artifacts_created", []),
                     "next_steps": yield_data.get("next_steps", []),
+                    "song_requests": yield_data.get("song_requests", []),
                     "nonce": yield_data.get("nonce", ""),
                 })
             except (json.JSONDecodeError, TypeError):
@@ -648,16 +916,18 @@ def prey8_perceive(
             f"hfo.gen{GEN}.prey8.perceive",
             event_data,
             "prey-perceive",
+            agent_id=agent_id,
         )
         row_id = _write_stigmergy(event)
 
-        # Update session state
-        _session["session_id"] = sid
-        _session["perceive_nonce"] = nonce
-        _session["react_token"] = None
-        _session["execute_tokens"] = []
-        _session["phase"] = "perceived"
-        _session["chain"] = [{
+        # Update per-agent session state
+        session = _get_session(agent_id)
+        session["session_id"] = sid
+        session["perceive_nonce"] = nonce
+        session["react_token"] = None
+        session["execute_tokens"] = []
+        session["phase"] = "perceived"
+        session["chain"] = [{
             "step": "PERCEIVE",
             "nonce": nonce,
             "chain_hash": c_hash,
@@ -665,10 +935,10 @@ def prey8_perceive(
             "stigmergy_row_id": row_id,
             "timestamp": event_data["ts"],
         }]
-        _session["started_at"] = event_data["ts"]
+        session["started_at"] = event_data["ts"]
 
-        # Persist to disk
-        _save_session()
+        # Persist to disk (per-agent file)
+        _save_session(agent_id)
 
         return {
             "status": "PERCEIVED",
@@ -711,6 +981,7 @@ def prey8_perceive(
 
 @mcp.tool()
 def prey8_react(
+    agent_id: str,
     perceive_nonce: str,
     analysis: str,
     plan: str,
@@ -760,35 +1031,46 @@ def prey8_react(
         dict with: react_token, chain_hash, gate_receipt
         OR GATE_BLOCKED if structured fields are missing.
     """
+    # ---- v4.0: DENY-BY-DEFAULT AGENT AUTHORIZATION ----
+    agent_id = agent_id.strip().lower()
+    agent_block = _validate_agent(agent_id, "REACT")
+    if agent_block:
+        return agent_block
+
+    session = _get_session(agent_id)
+
     # ---- Phase check ----
-    if _session["phase"] != "perceived":
+    if session["phase"] != "perceived":
         return {
             "status": "ERROR",
-            "error": f"Cannot React -- current phase is '{_session['phase']}'. "
+            "error": f"Cannot React -- agent '{agent_id}' current phase is '{session['phase']}'. "
                      "You must call prey8_perceive first.",
             "tamper_evidence": "Phase violation detected. This is logged.",
         }
 
     # ---- Nonce tamper check ----
-    if perceive_nonce != _session["perceive_nonce"]:
+    if perceive_nonce != session["perceive_nonce"]:
         alert_data = {
             "alert_type": "nonce_mismatch",
             "step": "REACT",
-            "expected": _session["perceive_nonce"],
+            "agent_id": agent_id,
+            "expected": session["perceive_nonce"],
             "received": perceive_nonce,
-            "session_id": _session["session_id"],
+            "session_id": session["session_id"],
             "timestamp": _now_iso(),
         }
         alert_event = _cloudevent(
             f"hfo.gen{GEN}.prey8.tamper_alert",
             alert_data,
             "prey-tamper-alert",
+            agent_id=agent_id,
         )
         _write_stigmergy(alert_event)
         return {
             "status": "ERROR",
-            "error": f"TAMPER ALERT: Nonce mismatch. Expected '{_session['perceive_nonce']}', "
-                     f"got '{perceive_nonce}'. This violation has been logged to SSOT.",
+            "error": f"TAMPER ALERT: Nonce mismatch for agent '{agent_id}'. "
+                     f"Expected '{session['perceive_nonce']}', got '{perceive_nonce}'. "
+                     "This violation has been logged to SSOT.",
         }
 
     # ---- FAIL-CLOSED GATE: P1 BRIDGE + P7 NAVIGATE ----
@@ -801,20 +1083,21 @@ def prey8_react(
         "meadows_level": meadows_level,
         "meadows_justification": meadows_justification,
         "sequential_plan": plan_steps_list,
-    })
+    }, agent_id=agent_id)
     if gate_block:
         return gate_block
 
     # ---- Gate passed — proceed with react ----
 
-    parent_hash = _session["chain"][-1]["chain_hash"]
+    parent_hash = session["chain"][-1]["chain_hash"]
     react_token = _nonce()
 
     # Build event data (includes gate fields for auditability)
     event_data = {
         "perceive_nonce": perceive_nonce,
         "react_token": react_token,
-        "session_id": _session["session_id"],
+        "session_id": session["session_id"],
+        "agent_id": agent_id,
         "analysis": analysis[:2000],
         "plan": plan[:2000],
         "ts": _now_iso(),
@@ -843,13 +1126,14 @@ def prey8_react(
         f"hfo.gen{GEN}.prey8.react",
         event_data,
         "prey-react",
+        agent_id=agent_id,
     )
     row_id = _write_stigmergy(event)
 
-    # Update session state
-    _session["react_token"] = react_token
-    _session["phase"] = "reacted"
-    _session["chain"].append({
+    # Update per-agent session state
+    session["react_token"] = react_token
+    session["phase"] = "reacted"
+    session["chain"].append({
         "step": "REACT",
         "nonce": react_token,
         "chain_hash": c_hash,
@@ -858,15 +1142,16 @@ def prey8_react(
         "timestamp": event_data["ts"],
     })
 
-    # Persist to disk
-    _save_session()
+    # Persist to disk (per-agent)
+    _save_session(agent_id)
 
     return {
         "status": "REACTED",
         "react_token": react_token,
         "chain_hash": c_hash,
         "chain_position": 1,
-        "session_id": _session["session_id"],
+        "session_id": session["session_id"],
+        "agent_id": agent_id,
         "stigmergy_row_id": row_id,
         "parent_chain_hash": parent_hash,
         "gate_receipt": {
@@ -899,6 +1184,7 @@ def prey8_react(
 
 @mcp.tool()
 def prey8_execute(
+    agent_id: str,
     react_token: str,
     action_summary: str,
     sbe_given: str,
@@ -945,34 +1231,44 @@ def prey8_execute(
         dict with: execute_token, chain_hash, gate_receipt, step_number
         OR GATE_BLOCKED if structured fields are missing.
     """
+    # ---- v4.0: DENY-BY-DEFAULT AGENT AUTHORIZATION ----
+    agent_id = agent_id.strip().lower()
+    agent_block = _validate_agent(agent_id, "EXECUTE")
+    if agent_block:
+        return agent_block
+
+    session = _get_session(agent_id)
+
     # ---- Phase check ----
-    if _session["phase"] not in ("reacted", "executing"):
+    if session["phase"] not in ("reacted", "executing"):
         return {
             "status": "ERROR",
-            "error": f"Cannot Execute -- current phase is '{_session['phase']}'. "
+            "error": f"Cannot Execute -- agent '{agent_id}' current phase is '{session['phase']}'. "
                      "You must call prey8_react first.",
         }
 
     # ---- Token tamper check ----
-    if react_token != _session["react_token"]:
+    if react_token != session["react_token"]:
         alert_data = {
             "alert_type": "react_token_mismatch",
             "step": "EXECUTE",
-            "expected": _session["react_token"],
+            "agent_id": agent_id,
+            "expected": session["react_token"],
             "received": react_token,
-            "session_id": _session["session_id"],
+            "session_id": session["session_id"],
             "timestamp": _now_iso(),
         }
         alert_event = _cloudevent(
             f"hfo.gen{GEN}.prey8.tamper_alert",
             alert_data,
             "prey-tamper-alert",
+            agent_id=agent_id,
         )
         _write_stigmergy(alert_event)
         return {
             "status": "ERROR",
-            "error": f"TAMPER ALERT: React token mismatch. "
-                     f"Expected '{_session['react_token']}', got '{react_token}'. Logged to SSOT.",
+            "error": f"TAMPER ALERT: React token mismatch for agent '{agent_id}'. "
+                     f"Expected '{session['react_token']}', got '{react_token}'. Logged to SSOT.",
         }
 
     # ---- FAIL-CLOSED GATE: P2 SHAPE + P4 DISRUPT ----
@@ -985,22 +1281,23 @@ def prey8_execute(
         "artifacts": artifacts_list,
         "p4_adversarial_check": p4_adversarial_check,
         "fail_closed_gate": fail_closed_gate,
-    })
+    }, agent_id=agent_id)
     if gate_block:
         return gate_block
 
     # ---- Gate passed — proceed with execute ----
 
-    parent_hash = _session["chain"][-1]["chain_hash"]
+    parent_hash = session["chain"][-1]["chain_hash"]
     exec_token = _nonce()
-    step_num = len(_session["execute_tokens"]) + 1
+    step_num = len(session["execute_tokens"]) + 1
 
     # Build event data (includes gate fields for auditability)
     event_data = {
-        "perceive_nonce": _session["perceive_nonce"],
+        "perceive_nonce": session["perceive_nonce"],
         "react_token": react_token,
         "execute_token": exec_token,
-        "session_id": _session["session_id"],
+        "session_id": session["session_id"],
+        "agent_id": agent_id,
         "action_summary": action_summary[:2000],
         "step_number": step_num,
         "ts": _now_iso(),
@@ -1032,18 +1329,19 @@ def prey8_execute(
         f"hfo.gen{GEN}.prey8.execute",
         event_data,
         "prey-execute",
+        agent_id=agent_id,
     )
     row_id = _write_stigmergy(event)
 
-    # Update session state
-    _session["execute_tokens"].append({
+    # Update per-agent session state
+    session["execute_tokens"].append({
         "token": exec_token,
         "action": action_summary[:500],
         "chain_hash": c_hash,
         "sbe_spec": event_data["p2_sbe_spec"],
     })
-    _session["phase"] = "executing"
-    _session["chain"].append({
+    session["phase"] = "executing"
+    session["chain"].append({
         "step": f"EXECUTE_{step_num}",
         "nonce": exec_token,
         "chain_hash": c_hash,
@@ -1052,8 +1350,8 @@ def prey8_execute(
         "timestamp": event_data["ts"],
     })
 
-    # Persist to disk
-    _save_session()
+    # Persist to disk (per-agent)
+    _save_session(agent_id)
 
     return {
         "status": "EXECUTING",
@@ -1061,7 +1359,7 @@ def prey8_execute(
         "chain_hash": c_hash,
         "chain_position": 1 + step_num,
         "step_number": step_num,
-        "session_id": _session["session_id"],
+        "session_id": session["session_id"],
         "stigmergy_row_id": row_id,
         "parent_chain_hash": parent_hash,
         "gate_receipt": {
@@ -1089,6 +1387,7 @@ def prey8_execute(
 
 @mcp.tool()
 def prey8_yield(
+    agent_id: str,
     summary: str,
     delivery_manifest: str,
     test_evidence: str,
@@ -1102,6 +1401,7 @@ def prey8_yield(
     artifacts_modified: str = "",
     next_steps: str = "",
     insights: str = "",
+    song_requests: str = "",
 ) -> dict:
     """
     Y -- YIELD: Close the PREY8 loop. Final tile in the mosaic.
@@ -1129,6 +1429,13 @@ def prey8_yield(
     - artifacts_created/modified: File paths (carried from v2 for compat).
     - next_steps: Recommended next actions.
     - insights: Key learnings or discoveries.
+    - song_requests: Comma-separated song requests for the SINGER OF STRIFE
+      AND SPLENDOR daemon. Each entry format: ACTION:SONG_NAME:REASON where
+      ACTION is REINFORCE (amplify existing song) or PROPOSE (new song).
+      Example: "REINFORCE:WAIL_OF_THE_BANSHEE:memory loss recurring,
+      PROPOSE:GENESIS_ECHO:P2 creation patterns should be amplified".
+      The singer daemon reads these from yield events and sings them,
+      creating a strange loop where each PREY8 cycle builds the hive songbook.
 
     If ANY required field is empty, mutation_confidence is not 0-100, or
     immunization_status is not PASSED/FAILED/PARTIAL, you are GATE_BLOCKED.
@@ -1147,17 +1454,26 @@ def prey8_yield(
         artifacts_modified: Comma-separated modified file paths (optional).
         next_steps: Comma-separated next actions (optional).
         insights: Comma-separated learnings (optional).
+        song_requests: Comma-separated REINFORCE/PROPOSE song requests (optional).
 
     Returns:
         dict with: completion_receipt, chain_verification, gate_receipt,
                    stryker_receipt, sw4_contract
         OR GATE_BLOCKED if structured fields are missing.
     """
+    # ---- v4.0: DENY-BY-DEFAULT AGENT AUTHORIZATION ----
+    agent_id = agent_id.strip().lower()
+    agent_block = _validate_agent(agent_id, "YIELD")
+    if agent_block:
+        return agent_block
+
+    session = _get_session(agent_id)
+
     # ---- Phase check ----
-    if _session["phase"] not in ("reacted", "executing"):
+    if session["phase"] not in ("reacted", "executing"):
         return {
             "status": "ERROR",
-            "error": f"Cannot Yield -- current phase is '{_session['phase']}'. "
+            "error": f"Cannot Yield -- agent '{agent_id}' current phase is '{session['phase']}'. "
                      "You must complete Perceive -> React (-> Execute) first.",
         }
 
@@ -1168,6 +1484,7 @@ def prey8_yield(
             "status": "GATE_BLOCKED",
             "gate": "YIELD",
             "port_pair": "P3_INJECT + P5_IMMUNIZE",
+            "agent_id": agent_id,
             "error": f"immunization_status must be one of {valid_statuses}, "
                      f"got '{immunization_status}'",
             "bricked": True,
@@ -1186,14 +1503,14 @@ def prey8_yield(
         "completion_given": completion_given,
         "completion_when": completion_when,
         "completion_then": completion_then,
-    })
+    }, agent_id=agent_id)
     if gate_block:
         return gate_block
 
     # ---- Gate passed — proceed with yield ----
 
-    perceive_nonce = _session["perceive_nonce"]
-    parent_hash = _session["chain"][-1]["chain_hash"]
+    perceive_nonce = session["perceive_nonce"]
+    parent_hash = session["chain"][-1]["chain_hash"]
     grudge_list = _split_csv(grudge_violations)
 
     conn = _get_conn()
@@ -1206,8 +1523,8 @@ def prey8_yield(
     nonce = _nonce()
 
     # Build full chain verification data
-    chain_hashes = [tile["chain_hash"] for tile in _session["chain"]]
-    chain_steps = [tile["step"] for tile in _session["chain"]]
+    chain_hashes = [tile["chain_hash"] for tile in session["chain"]]
+    chain_steps = [tile["step"] for tile in session["chain"]]
 
     # Normalize immunization_status
     imm_status = immunization_status.strip().upper()
@@ -1218,7 +1535,8 @@ def prey8_yield(
         "summary": summary,
         "nonce": nonce,
         "perceive_nonce": perceive_nonce,
-        "session_id": _session["session_id"],
+        "session_id": session["session_id"],
+        "agent_id": agent_id,
         "ts": _now_iso(),
         # Gate-enforced structured fields (P3 + P5)
         "p3_delivery_manifest": delivery_list,
@@ -1239,16 +1557,18 @@ def prey8_yield(
         "artifacts_modified": _split_csv(artifacts_modified),
         "next_steps": _split_csv(next_steps),
         "insights": _split_csv(insights),
+        # Song requests for the SINGER OF STRIFE AND SPLENDOR strange loop
+        "song_requests": _split_csv(song_requests),
         # Context
         "doc_count": doc_count,
         "event_count": event_count,
-        "execute_steps": len(_session["execute_tokens"]),
-        "chain_position": len(_session["chain"]),
+        "execute_steps": len(session["execute_tokens"]),
+        "chain_position": len(session["chain"]),
         "parent_chain_hash": parent_hash,
         "server_version": SERVER_VERSION,
         # Full chain verification mosaic
         "chain_verification": {
-            "chain_length": len(_session["chain"]) + 1,
+            "chain_length": len(session["chain"]) + 1,
             "chain_hashes": chain_hashes,
             "chain_steps": chain_steps + ["YIELD"],
             "genesis_hash": "GENESIS",
@@ -1256,9 +1576,9 @@ def prey8_yield(
             "final_parent_hash": parent_hash,
         },
         "persists": (
-            f"PREY8 mosaic complete. Session {_session['session_id']}. "
+            f"PREY8 mosaic complete. Agent {agent_id}. Session {session['session_id']}. "
             f"Perceive nonce: {perceive_nonce}. "
-            f"Chain: {len(_session['chain']) + 1} tiles. "
+            f"Chain: {len(session['chain']) + 1} tiles. "
             f"Mutation confidence: {mutation_confidence}%. "
             f"Immunization: {imm_status}. "
             f"Summary: {summary}"
@@ -1275,6 +1595,7 @@ def prey8_yield(
         f"hfo.gen{GEN}.prey8.yield",
         event_data,
         "prey-yield",
+        agent_id=agent_id,
     )
     row_id = _write_stigmergy(event)
 
@@ -1284,14 +1605,16 @@ def prey8_yield(
         "nonce": nonce,
         "chain_hash": c_hash,
         "perceive_nonce": perceive_nonce,
-        "session_id": _session["session_id"],
+        "agent_id": agent_id,
+        "session_id": session["session_id"],
         "stigmergy_row_id": row_id,
-        "chain_position": len(_session["chain"]),
-        "execute_steps_logged": len(_session["execute_tokens"]),
+        "chain_position": len(session["chain"]),
+        "execute_steps_logged": len(session["execute_tokens"]),
         "gate_receipt": {
             "gate": "YIELD",
             "port_pair": "P3_INJECT + P5_IMMUNIZE",
             "passed": True,
+            "agent_id": agent_id,
             "delivery_items": len(delivery_list),
             "test_items": len(test_list),
             "mutation_confidence": mutation_confidence,
@@ -1315,37 +1638,40 @@ def prey8_yield(
             "then": completion_then.strip(),
         },
         "chain_verification": {
-            "total_tiles": len(_session["chain"]) + 1,
+            "total_tiles": len(session["chain"]) + 1,
             "chain_intact": True,
             "genesis_to_yield": [
                 {"step": t["step"], "hash": t["chain_hash"][:16] + "..."}
-                for t in _session["chain"]
+                for t in session["chain"]
             ] + [{"step": "YIELD", "hash": c_hash[:16] + "..."}],
             "all_gates_passed": [
-                t["step"] for t in _session["chain"]
+                t["step"] for t in session["chain"]
             ] + ["YIELD"],
         },
         "instruction": (
             f"MOSAIC COMPLETE [ALL GATES PASSED]. "
-            f"Session {_session['session_id']}. "
-            f"{len(_session['chain']) + 1} tiles, all hash-linked. "
+            f"Agent {agent_id}. Session {session['session_id']}. "
+            f"{len(session['chain']) + 1} tiles, all hash-linked. "
             f"Stryker confidence: {mutation_confidence}%. "
             f"Immunization: {imm_status}. "
             "Session persisted to SSOT."
+            + (f" SONG REQUESTS LOGGED: {len(_split_csv(song_requests))} requests "
+               "will be picked up by the Singer daemon."
+               if song_requests.strip() else "")
         ),
     }
 
-    # Reset session
-    _session["session_id"] = None
-    _session["perceive_nonce"] = None
-    _session["react_token"] = None
-    _session["execute_tokens"] = []
-    _session["phase"] = "idle"
-    _session["chain"] = []
-    _session["started_at"] = None
+    # Reset per-agent session
+    session["session_id"] = None
+    session["perceive_nonce"] = None
+    session["react_token"] = None
+    session["execute_tokens"] = []
+    session["phase"] = "idle"
+    session["chain"] = []
+    session["started_at"] = None
 
     # Clear persisted state (loop closed, no recovery needed)
-    _clear_session_file()
+    _clear_session_file(agent_id)
 
     return receipt
 
@@ -1481,9 +1807,12 @@ def prey8_query_stigmergy(
 
 
 @mcp.tool()
-def prey8_ssot_stats() -> dict:
+def prey8_ssot_stats(agent_id: str = "") -> dict:
     """
     Get current SSOT database statistics.
+
+    Args:
+        agent_id: Optional agent ID to show that agent's session. Empty = show all active sessions.
 
     Returns:
         dict with doc_count, event_count, sources breakdown, session info, observability.
@@ -1524,28 +1853,66 @@ def prey8_ssot_stats() -> dict:
                 "gate_blocked_events": gate_blocked_count,
                 "server_version": SERVER_VERSION,
             },
-            "current_session": {
-                "session_id": _session["session_id"],
-                "phase": _session["phase"],
-                "perceive_nonce": _session["perceive_nonce"],
-                "chain_length": len(_session["chain"]),
-                "execute_steps": len(_session["execute_tokens"]),
+            "registered_agents": list(AGENT_REGISTRY.keys()),
+            "active_sessions": {
+                aid: {
+                    "session_id": s["session_id"],
+                    "phase": s["phase"],
+                    "perceive_nonce": s["perceive_nonce"],
+                    "chain_length": len(s["chain"]),
+                    "execute_steps": len(s["execute_tokens"]),
+                }
+                for aid, s in _sessions.items()
+                if s["session_id"] is not None
             },
+            "current_agent_session": (
+                {
+                    "agent_id": agent_id.strip().lower(),
+                    "session_id": _get_session(agent_id.strip().lower())["session_id"],
+                    "phase": _get_session(agent_id.strip().lower())["phase"],
+                }
+                if agent_id.strip()
+                else None
+            ),
         }
     finally:
         conn.close()
 
 
 @mcp.tool()
-def prey8_session_status() -> dict:
+def prey8_session_status(agent_id: str = "") -> dict:
     """
     Get current PREY8 session status, flow state, chain integrity,
     and what gate fields are required for the next step.
 
+    Args:
+        agent_id: Agent to check status for. Empty = show all active sessions summary.
+
     Returns:
         Current phase, nonces, chain hashes, next step requirements.
     """
-    phase = _session["phase"]
+    # If no agent_id, return summary of all active sessions
+    if not agent_id.strip():
+        active = {}
+        for aid, s in _sessions.items():
+            if s["session_id"] is not None:
+                active[aid] = {
+                    "session_id": s["session_id"],
+                    "phase": s["phase"],
+                    "chain_length": len(s["chain"]),
+                    "execute_steps": len(s["execute_tokens"]),
+                }
+        return {
+            "mode": "swarm_overview",
+            "active_sessions": active,
+            "active_count": len(active),
+            "registered_agents": list(AGENT_REGISTRY.keys()),
+            "hint": "Pass agent_id to see detailed session status for a specific agent.",
+        }
+
+    agent_id = agent_id.strip().lower()
+    session = _get_session(agent_id)
+    phase = session["phase"]
     available_next = {
         "idle": ["prey8_perceive"],
         "perceived": ["prey8_react"],
@@ -1580,7 +1947,7 @@ def prey8_session_status() -> dict:
     }
 
     chain_summary = []
-    for tile in _session["chain"]:
+    for tile in session["chain"]:
         chain_summary.append({
             "step": tile["step"],
             "hash": tile["chain_hash"][:16] + "...",
@@ -1588,41 +1955,63 @@ def prey8_session_status() -> dict:
             "row_id": tile["stigmergy_row_id"],
         })
 
+    # Check agent authorization (informational, not gated)
+    agent_info = AGENT_REGISTRY.get(agent_id, {})
+
     return {
-        "session_id": _session["session_id"],
+        "agent_id": agent_id,
+        "agent_display_name": agent_info.get("display_name", "UNKNOWN"),
+        "agent_role": agent_info.get("role", "UNREGISTERED"),
+        "agent_allowed_gates": agent_info.get("allowed_gates", []),
+        "session_id": session["session_id"],
         "phase": phase,
-        "perceive_nonce": _session["perceive_nonce"],
-        "react_token": _session["react_token"],
-        "execute_steps": len(_session["execute_tokens"]),
-        "chain_length": len(_session["chain"]),
+        "perceive_nonce": session["perceive_nonce"],
+        "react_token": session["react_token"],
+        "execute_steps": len(session["execute_tokens"]),
+        "chain_length": len(session["chain"]),
         "chain_tiles": chain_summary,
         "available_next_tools": available_next.get(phase, []),
         "next_gate": next_gate_fields.get(phase, {}),
         "flow": "GENESIS -> Perceive[P0+P6] -> React[P1+P7] -> Execute[P2+P4]* -> Yield[P3+P5]",
-        "memory_loss_count_this_session": _session["memory_loss_count"],
-        "gate_architecture": "fail-closed: missing fields = GATE_BLOCKED = bricked agent",
+        "memory_loss_count_this_session": session["memory_loss_count"],
+        "gate_architecture": "fail-closed: missing fields = GATE_BLOCKED = bricked agent = deny-by-default",
     }
 
 
 @mcp.tool()
-def prey8_validate_chain(session_id: str = "") -> dict:
+def prey8_validate_chain(session_id: str = "", agent_id: str = "") -> dict:
     """
     Validate the tamper-evident hash chain for a session.
 
-    Reads all PREY8 events for the given session (or current session)
+    Reads all PREY8 events for the given session (or current agent session)
     from SSOT and verifies the chain_hash linkage is intact.
 
     Args:
-        session_id: Session ID to validate (empty = current session).
+        session_id: Session ID to validate. Takes priority over agent_id.
+        agent_id: Agent whose current session to validate (if no session_id given).
 
     Returns:
         dict with: chain_valid, tiles_found, broken_links, gate_receipts
     """
     if not session_id:
-        if _session["session_id"]:
-            chain = _session["chain"]
+        # Try agent_id first, then scan all active sessions
+        target_session = None
+        target_agent = agent_id.strip().lower() if agent_id.strip() else None
+
+        if target_agent and target_agent in _sessions:
+            target_session = _sessions[target_agent]
+        else:
+            # Find any active session
+            for aid, s in _sessions.items():
+                if s["session_id"] is not None:
+                    target_session = s
+                    target_agent = aid
+                    break
+
+        if target_session and target_session["session_id"]:
+            chain = target_session["chain"]
             if not chain:
-                return {"chain_valid": False, "error": "No chain tiles in current session"}
+                return {"chain_valid": False, "error": f"No chain tiles in session for agent '{target_agent}'"}
 
             broken = []
             for i, tile in enumerate(chain):
@@ -1642,7 +2031,8 @@ def prey8_validate_chain(session_id: str = "") -> dict:
 
             return {
                 "chain_valid": len(broken) == 0,
-                "session_id": _session["session_id"],
+                "agent_id": target_agent,
+                "session_id": target_session["session_id"],
                 "tiles_found": len(chain),
                 "tiles": [
                     {"step": t["step"], "hash": t["chain_hash"][:16] + "..."}
@@ -1652,7 +2042,7 @@ def prey8_validate_chain(session_id: str = "") -> dict:
                 "source": "in_memory",
             }
         else:
-            return {"error": "No active session and no session_id provided."}
+            return {"error": "No active session found. Provide session_id or agent_id."}
 
     # Validate from SSOT (historical session)
     conn = _get_conn()
@@ -1839,7 +2229,9 @@ def prey8_detect_memory_loss() -> dict:
             "total_yields": total_yields,
             "total_gate_blocks": total_gate_blocks,
             "yield_ratio": f"{total_yields}/{total_perceives}" if total_perceives > 0 else "0/0",
-            "current_server_losses": _session["memory_loss_count"],
+            "current_server_losses": sum(
+                s.get("memory_loss_count", 0) for s in _sessions.values()
+            ),
             "gate_specs": {
                 name: {
                     "port_pair": spec["port_pair"],

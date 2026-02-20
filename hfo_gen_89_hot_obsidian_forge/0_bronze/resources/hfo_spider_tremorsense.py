@@ -160,7 +160,7 @@ SPIDER_REGISTRY = {
     },
     "P7": {
         "commander": "Spider Sovereign",
-        "title": "Summoner of Silk and Sovereignty",
+        "title": "Summoner of Seals and Spheres",
         "domain": "navigation, C2, steering, Meadows leverage, orchestration",
         "powerword": "NAVIGATE",
         "spell": "TIME STOP",

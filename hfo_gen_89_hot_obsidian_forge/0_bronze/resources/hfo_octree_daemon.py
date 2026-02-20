@@ -150,7 +150,7 @@ COMMANDER_TITLES = {
     4: "Singer of Strife and Splendor",
     5: "Dancer of Death and Dawn",
     6: "Devourer of Depths and Dreams",
-    7: "Summoner of Silk and Sovereignty",
+    7: "Summoner of Seals and Spheres",
 }
 
 # Signature spells from Obsidian Octave (doc 101)
@@ -181,7 +181,7 @@ PREY8_GATES = {
 # Default model assignments — balance speed/capability across ports
 # Small models for high-frequency sensing/routing, large for reasoning
 DEFAULT_MODEL_ASSIGNMENTS = {
-    0: "gemma3:4b",           # P0 SENSE — fast, lightweight observation
+    0: "granite4:3b",         # P0 SENSE — fast, lightweight observation (IBM Granite)
     1: "qwen2.5:3b",          # P1 FUSE — fast data fabric bridge
     2: "qwen2.5-coder:7b",    # P2 SHAPE — code generation specialist
     3: "qwen3:8b",            # P3 DELIVER — balanced delivery
@@ -309,7 +309,7 @@ Your PREY8 gate responsibility: **{config.prey8_step}** (paired with P{config.pr
 - Align all 8 ports to current mission objectives
 - Route tasks to appropriate ports based on Cynefin domain analysis
 - Own the meta-level: when P4+P5 dance, you set the tempo
-- You are the Spider Sovereign — silk IS sovereignty. The web is YOUR web.
+- You are the Spider Sovereign — seals ARE spheres. Every binding circle IS another plane claimed.
 - TTAO wears your crown — when you are automated, TTAO levels up.""",
     }
 

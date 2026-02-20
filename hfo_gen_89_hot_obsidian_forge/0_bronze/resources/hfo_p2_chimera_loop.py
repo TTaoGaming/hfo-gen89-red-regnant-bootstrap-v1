@@ -69,9 +69,9 @@ import httpx
 # ---------------------------------------------------------------------------
 
 OLLAMA_BASE = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-TIMEOUT_GENERATE = 180  # generous for big models
+TIMEOUT_GENERATE = 600  # generous for reasoning models (deepseek-r1 think chains)
 TIMEOUT_TEST = 10
-MAX_TOKENS = 2048
+MAX_TOKENS = 4096  # reasoning models need headroom for <think> chains
 
 def _find_root() -> Path:
     for anchor in [Path.cwd(), Path(__file__).resolve().parent]:
@@ -89,11 +89,13 @@ GEN = os.environ.get("HFO_GENERATION", "89")
 # ---------------------------------------------------------------------------
 
 MODEL_GRID = {
-    "small_low":  "gemma3:4b",       # 3.3GB — lightweight, general
-    "small_high": "deepseek-r1:8b",  # 5.2GB — reasoning distill
-    "large_low":  "phi4:14b",        # 9.1GB — general purpose
-    "large_high": "qwen3:30b-a3b",   # 18GB  — MoE reasoning
+    "small_low":  "gemma3:4b",         # 3.1GB — lightweight, general
+    "small_high": "qwen2.5-coder:7b",  # 4.4GB — dedicated code model (fast, no think chains)
+    "large_low":  "phi4:14b",          # 8.4GB — general purpose
+    "large_high": "gemma3:12b",        # 7.6GB — larger gemma (fits 16GB VRAM)
 }
+# NOTE: deepseek-r1:8b → 500 on Intel Arc Vulkan; qwen3:30b-a3b → OOM (17GB > 16GB VRAM)
+# NOTE: qwen3:8b → 590s/problem (think chains), deepseek-r1:8b → 500 error. Both unsuitable.
 
 # Axis labels for MAP-ELITES style archiving
 GRID_AXES = {
@@ -201,11 +203,115 @@ TRAIT_ALLELES = {
 NUM_TRAITS = len(TRAIT_ALLELES)
 TRAIT_NAMES = list(TRAIT_ALLELES.keys())
 
+# ---------------------------------------------------------------------------
+# META-GENOME — Layer 3+4 Mutation (Fitness Weights + Selection Strategy)
+# ---------------------------------------------------------------------------
+# Universal Darwinism: everything gets mutated.
+# The meta-genome controls HOW evolution works, not just WHAT evolves.
+# This is the hyperheuristic: evolving the heuristic that selects heuristics.
+
+META_TRAITS = {
+    "fitness_weights": {
+        "desc": "How to weight fitness dimensions (coding,gate,adv,meadows,token,latency)",
+        "alleles": {
+            "balanced":           [0.30, 0.25, 0.15, 0.10, 0.10, 0.10],
+            "code_dominant":      [0.50, 0.15, 0.10, 0.10, 0.08, 0.07],
+            "gate_dominant":      [0.20, 0.40, 0.15, 0.10, 0.08, 0.07],
+            "adversarial_focus":  [0.20, 0.20, 0.35, 0.10, 0.08, 0.07],
+            "efficiency_focus":   [0.20, 0.20, 0.10, 0.10, 0.25, 0.15],
+        },
+    },
+    "aggregation_method": {
+        "desc": "How to combine fitness dimensions into a single score",
+        "alleles": {
+            "weighted_sum":    "weighted_sum",
+            "geometric_mean":  "geometric_mean",
+            "harmonic_mean":   "harmonic_mean",
+            "min_of_all":      "min_of_all",
+        },
+    },
+    "selection_pressure": {
+        "desc": "Tournament size for selection (higher = more pressure)",
+        "alleles": {
+            "tournament_2": 2,
+            "tournament_3": 3,
+            "tournament_5": 5,
+        },
+    },
+    "prompt_template": {
+        "desc": "How to structure the eval prompt sent to models",
+        "alleles": {
+            "json_structured":     "json_structured",
+            "minimal_code_only":   "minimal_code_only",
+            "chain_of_thought":    "chain_of_thought",
+        },
+    },
+}
+
+META_TRAIT_NAMES = list(META_TRAITS.keys())
+DEFAULT_META_TRAITS = {
+    "fitness_weights": "balanced",
+    "aggregation_method": "weighted_sum",
+    "selection_pressure": "tournament_3",
+    "prompt_template": "json_structured",
+}
+
+# Prompt template variants for Layer 2 mutation
+PROMPT_TEMPLATES = {
+    "json_structured": """Solve this coding problem. You MUST output a JSON object with these fields:
+
+{{
+    "observations": "What you noticed about the problem (comma-separated)",
+    "memory_refs": "Concepts/patterns you're drawing on",
+    "stigmergy_digest": "Key patterns from prior work",
+    "shared_data_refs": "Cross-references to related concepts",
+    "navigation_intent": "Your strategic approach to this problem",
+    "meadows_level": <integer 1-12>,
+    "meadows_justification": "Why you chose this leverage level",
+    "sequential_plan": "Ordered steps to solve (comma-separated)",
+    "sbe_given": "Given <precondition>",
+    "sbe_when": "When <action>",
+    "sbe_then": "Then <expected result>",
+    "artifacts": "What you're producing",
+    "p4_adversarial_check": "Edge cases, failure modes, mutation opportunities checked",
+    "code": "<complete Python function>"
+}}
+
+Output ONLY the JSON. No markdown wrapping. No explanation outside JSON.
+The "code" field must contain a complete, executable Python function.
+
+Problem:
+{problem_prompt}""",
+
+    "minimal_code_only": """Write a Python function to solve this problem.
+Output ONLY the function code. No explanation. No imports unless needed.
+
+{problem_prompt}""",
+
+    "chain_of_thought": """Solve this step-by-step.
+
+Problem: {problem_prompt}
+
+1. First, analyze the problem requirements
+2. Consider edge cases (empty input, negative numbers, large values)
+3. Write the solution as a Python function
+
+Output your reasoning, then the final code in a ```python block.
+Also output a JSON with these fields on a separate line:
+{{"observations": "...", "memory_refs": "...", "stigmergy_digest": "...", "shared_data_refs": "...", "navigation_intent": "...", "meadows_level": <1-12>, "meadows_justification": "...", "sequential_plan": "...", "sbe_given": "...", "sbe_when": "...", "sbe_then": "...", "artifacts": "...", "p4_adversarial_check": "..."}}""",
+}
+
 
 @dataclass
 class Genome:
-    """A chimera persona genome — one allele per trait."""
+    """A chimera persona genome — one allele per trait + meta-traits.
+
+    Layer 1: traits (persona alleles — what the agent IS)
+    Layer 2-4: meta_traits (how evolution WORKS — fitness weights,
+               aggregation, selection, prompt template)
+    """
     traits: dict  # {trait_name: allele_value}
+    meta_traits: dict = field(default_factory=lambda: dict(DEFAULT_META_TRAITS))
     genome_id: str = ""
     generation: int = 0
     parent_ids: list = field(default_factory=list)
@@ -213,6 +319,28 @@ class Genome:
     def __post_init__(self):
         if not self.genome_id:
             self.genome_id = secrets.token_hex(4)
+        # Ensure meta_traits has all keys with defaults
+        for k, v in DEFAULT_META_TRAITS.items():
+            if k not in self.meta_traits:
+                self.meta_traits[k] = v
+
+    def get_fitness_weights(self) -> dict:
+        """Resolve meta-genome fitness weights allele to actual weight dict."""
+        allele = self.meta_traits.get("fitness_weights", "balanced")
+        weights_list = META_TRAITS["fitness_weights"]["alleles"].get(allele, [0.30, 0.25, 0.15, 0.10, 0.10, 0.10])
+        dim_names = ["coding_accuracy", "gate_compliance", "adversarial_depth",
+                     "meadows_alignment", "token_efficiency", "latency_score"]
+        return dict(zip(dim_names, weights_list))
+
+    def get_prompt_template(self) -> str:
+        """Resolve meta-genome prompt template allele to actual prompt text."""
+        allele = self.meta_traits.get("prompt_template", "json_structured")
+        return PROMPT_TEMPLATES.get(allele, PROMPT_TEMPLATES["json_structured"])
+
+    def get_tournament_size(self) -> int:
+        """Resolve meta-genome selection pressure to tournament size."""
+        allele = self.meta_traits.get("selection_pressure", "tournament_3")
+        return META_TRAITS["selection_pressure"]["alleles"].get(allele, 3)
 
     def to_system_prompt(self) -> str:
         """Render this genome into a system prompt for Ollama."""
@@ -343,9 +471,13 @@ class Genome:
         return "\n".join(sections)
 
     def mutate(self, mutation_rate: float = 0.3) -> 'Genome':
-        """Return a mutated copy. Each trait has mutation_rate chance of changing."""
+        """Return a mutated copy. Each trait has mutation_rate chance of changing.
+        Meta-traits mutate at half the rate (slower meta-evolution)."""
         new_traits = dict(self.traits)
+        new_meta = dict(self.meta_traits)
         mutated = False
+
+        # Layer 1: persona traits
         for trait_name in TRAIT_NAMES:
             if random.random() < mutation_rate:
                 alleles = TRAIT_ALLELES[trait_name]["alleles"]
@@ -354,8 +486,19 @@ class Genome:
                 if candidates:
                     new_traits[trait_name] = random.choice(candidates)
                     mutated = True
+
+        # Layer 2-4: meta-traits (half rate — slower meta-evolution)
+        for meta_name in META_TRAIT_NAMES:
+            if random.random() < mutation_rate * 0.5:
+                allele_keys = list(META_TRAITS[meta_name]["alleles"].keys())
+                current = new_meta.get(meta_name)
+                candidates = [a for a in allele_keys if a != current]
+                if candidates:
+                    new_meta[meta_name] = random.choice(candidates)
+                    mutated = True
+
         if not mutated:
-            # Force at least one mutation
+            # Force at least one mutation (persona trait)
             trait_name = random.choice(TRAIT_NAMES)
             alleles = TRAIT_ALLELES[trait_name]["alleles"]
             current = new_traits[trait_name]
@@ -364,6 +507,7 @@ class Genome:
                 new_traits[trait_name] = random.choice(candidates)
         child = Genome(
             traits=new_traits,
+            meta_traits=new_meta,
             generation=self.generation + 1,
             parent_ids=[self.genome_id],
         )
@@ -371,30 +515,40 @@ class Genome:
 
     @staticmethod
     def crossover(parent_a: 'Genome', parent_b: 'Genome') -> 'Genome':
-        """Uniform crossover: each trait randomly from one parent."""
+        """Uniform crossover: each trait randomly from one parent (incl. meta-traits)."""
         new_traits = {}
         for trait_name in TRAIT_NAMES:
             if random.random() < 0.5:
                 new_traits[trait_name] = parent_a.traits[trait_name]
             else:
                 new_traits[trait_name] = parent_b.traits[trait_name]
+        new_meta = {}
+        for meta_name in META_TRAIT_NAMES:
+            if random.random() < 0.5:
+                new_meta[meta_name] = parent_a.meta_traits.get(meta_name, DEFAULT_META_TRAITS[meta_name])
+            else:
+                new_meta[meta_name] = parent_b.meta_traits.get(meta_name, DEFAULT_META_TRAITS[meta_name])
         return Genome(
             traits=new_traits,
+            meta_traits=new_meta,
             generation=max(parent_a.generation, parent_b.generation) + 1,
             parent_ids=[parent_a.genome_id, parent_b.genome_id],
         )
 
     @staticmethod
     def random_genome(generation: int = 0) -> 'Genome':
-        """Generate a random genome."""
+        """Generate a random genome (persona + meta-traits)."""
         traits = {}
         for trait_name, info in TRAIT_ALLELES.items():
             traits[trait_name] = random.choice(info["alleles"])
-        return Genome(traits=traits, generation=generation)
+        meta = {}
+        for meta_name, info in META_TRAITS.items():
+            meta[meta_name] = random.choice(list(info["alleles"].keys()))
+        return Genome(traits=traits, meta_traits=meta, generation=generation)
 
     def fingerprint(self) -> str:
-        """Short hash of trait combination for dedup."""
-        s = json.dumps(self.traits, sort_keys=True)
+        """Short hash of trait + meta-trait combination for dedup."""
+        s = json.dumps({"traits": self.traits, "meta": self.meta_traits}, sort_keys=True)
         return hashlib.sha256(s.encode()).hexdigest()[:12]
 
 
@@ -434,8 +588,15 @@ class FitnessVector:
                 at_least_one_better = True
         return at_least_one_better
 
-    def aggregate(self, weights: dict = None) -> float:
-        """Weighted sum for simple ranking."""
+    def aggregate(self, weights: dict = None, method: str = "weighted_sum") -> float:
+        """Aggregate fitness using configurable method (meta-genome controlled).
+
+        Methods:
+          weighted_sum:   Standard weighted sum (current default)
+          geometric_mean: Product^(1/n) — penalizes zeros harder
+          harmonic_mean:  n / sum(1/x_i) — penalizes weakness harder
+          min_of_all:     Bottleneck-driven — weakest dimension dominates
+        """
         w = weights or {
             "coding_accuracy": 0.30,
             "gate_compliance": 0.25,
@@ -444,7 +605,23 @@ class FitnessVector:
             "token_efficiency": 0.10,
             "latency_score": 0.10,
         }
-        return sum(getattr(self, k) * v for k, v in w.items())
+        vals = [getattr(self, k) * v for k, v in w.items()]
+
+        if method == "geometric_mean":
+            # Geometric mean of weighted values (avoid zero)
+            product = 1.0
+            for v in vals:
+                product *= max(v, 1e-6)
+            return product ** (1.0 / len(vals))
+        elif method == "harmonic_mean":
+            # Harmonic mean (penalizes near-zero dimensions)
+            denom = sum(1.0 / max(v, 1e-6) for v in vals)
+            return len(vals) / denom if denom > 0 else 0.0
+        elif method == "min_of_all":
+            # Bottleneck: weakest weighted dimension
+            return min(vals) if vals else 0.0
+        else:  # weighted_sum (default)
+            return sum(vals)
 
 
 @dataclass
@@ -500,30 +677,7 @@ except ImportError:
 # PREY8 Gate Evaluation Prompt
 # ---------------------------------------------------------------------------
 
-CHIMERA_EVAL_PROMPT = """Solve this coding problem. You MUST output a JSON object with these fields:
-
-{{
-    "observations": "What you noticed about the problem (comma-separated)",
-    "memory_refs": "Concepts/patterns you're drawing on",
-    "stigmergy_digest": "Key patterns from prior work",
-    "shared_data_refs": "Cross-references to related concepts",
-    "navigation_intent": "Your strategic approach to this problem",
-    "meadows_level": <integer 1-12>,
-    "meadows_justification": "Why you chose this leverage level",
-    "sequential_plan": "Ordered steps to solve (comma-separated)",
-    "sbe_given": "Given <precondition>",
-    "sbe_when": "When <action>",
-    "sbe_then": "Then <expected result>",
-    "artifacts": "What you're producing",
-    "p4_adversarial_check": "Edge cases, failure modes, mutation opportunities checked",
-    "code": "<complete Python function>"
-}}
-
-Output ONLY the JSON. No markdown wrapping. No explanation outside JSON.
-The "code" field must contain a complete, executable Python function.
-
-Problem:
-{problem_prompt}"""
+CHIMERA_EVAL_PROMPT = PROMPT_TEMPLATES["json_structured"]
 
 
 # ---------------------------------------------------------------------------
@@ -698,6 +852,152 @@ def _write_stigmergy(event_type: str, data: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Persistent MAP-ELITES Archive + Lineage Tables
+# ---------------------------------------------------------------------------
+
+def _ensure_archive_tables() -> None:
+    """Create chimera_archive and chimera_lineage tables if they don't exist.
+
+    Schema from gold diataxis: EXPLANATION_UNIVERSAL_DARWINISM §6.
+    These tables provide persistent MAP-ELITES archive for cross-session
+    evolutionary continuity and parent→child lineage tracking.
+    """
+    if not DB_PATH.exists():
+        return
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute("PRAGMA busy_timeout = 5000")
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS chimera_archive (
+                genome_id       TEXT PRIMARY KEY,
+                generation      INTEGER NOT NULL,
+                traits_json     TEXT NOT NULL,
+                meta_traits_json TEXT,
+                aggregate_score REAL NOT NULL,
+                fitness_json    TEXT NOT NULL,
+                grid_scores_json TEXT,
+                system_prompt   TEXT,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                parent_ids      TEXT,
+                is_pareto_front INTEGER DEFAULT 0,
+                notes           TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS chimera_lineage (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id        TEXT NOT NULL,
+                parent1_id      TEXT NOT NULL,
+                parent2_id      TEXT,
+                operator        TEXT NOT NULL CHECK(operator IN ('crossover','mutation','elite','seed','random')),
+                generation      INTEGER NOT NULL,
+                mutation_rate   REAL,
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (child_id) REFERENCES chimera_archive(genome_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chimera_archive_score
+                ON chimera_archive(aggregate_score DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_chimera_archive_generation
+                ON chimera_archive(generation);
+
+            CREATE INDEX IF NOT EXISTS idx_chimera_lineage_child
+                ON chimera_lineage(child_id);
+
+            CREATE INDEX IF NOT EXISTS idx_chimera_lineage_parent
+                ON chimera_lineage(parent1_id);
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _archive_elite(genome: Genome, eval_result: dict,
+                   parent_ids: list[str] = None,
+                   is_pareto: bool = False) -> None:
+    """Write a genome + its fitness to the persistent archive.
+
+    Upserts: if the genome_id already exists, update score if higher.
+    """
+    if not DB_PATH.exists():
+        return
+    agg = eval_result.get("aggregate_fitness", FitnessVector())
+    score = eval_result.get("aggregate_score", 0.0)
+    grid_scores = {}
+    for cell, res in eval_result.get("grid_results", {}).items():
+        grid_scores[cell] = {
+            "model": res.model,
+            "coding": round(res.fitness.coding_accuracy, 4),
+            "gates": round(res.fitness.gate_compliance, 4),
+            "aggregate": round(res.fitness.aggregate(), 4),
+        }
+
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute("PRAGMA busy_timeout = 5000")
+    try:
+        conn.execute(
+            """INSERT INTO chimera_archive
+               (genome_id, generation, traits_json, meta_traits_json,
+                aggregate_score, fitness_json, grid_scores_json,
+                system_prompt, parent_ids, is_pareto_front)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(genome_id) DO UPDATE SET
+                 aggregate_score = MAX(excluded.aggregate_score, chimera_archive.aggregate_score),
+                 fitness_json = CASE
+                   WHEN excluded.aggregate_score > chimera_archive.aggregate_score
+                   THEN excluded.fitness_json
+                   ELSE chimera_archive.fitness_json
+                 END,
+                 grid_scores_json = CASE
+                   WHEN excluded.aggregate_score > chimera_archive.aggregate_score
+                   THEN excluded.grid_scores_json
+                   ELSE chimera_archive.grid_scores_json
+                 END,
+                 is_pareto_front = excluded.is_pareto_front
+            """,
+            (
+                genome.genome_id,
+                genome.generation,
+                json.dumps(genome.traits, sort_keys=True),
+                json.dumps(getattr(genome, 'meta_traits', None), sort_keys=True),
+                round(score, 6),
+                json.dumps(asdict(agg), sort_keys=True) if hasattr(agg, '__dataclass_fields__') else json.dumps({}),
+                json.dumps(grid_scores, sort_keys=True),
+                genome.to_system_prompt()[:2000],
+                json.dumps(parent_ids) if parent_ids else None,
+                1 if is_pareto else 0,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _record_lineage(child_id: str, parent1_id: str, parent2_id: str = None,
+                    operator: str = "mutation", generation: int = 0,
+                    mutation_rate: float = None) -> None:
+    """Record parent→child lineage relationship."""
+    if not DB_PATH.exists():
+        return
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute("PRAGMA busy_timeout = 5000")
+    try:
+        conn.execute(
+            """INSERT INTO chimera_lineage
+               (child_id, parent1_id, parent2_id, operator, generation, mutation_rate)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (child_id, parent1_id, parent2_id, operator, generation, mutation_rate),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# Ensure tables exist on module import
+_ensure_archive_tables()
+
+
+# ---------------------------------------------------------------------------
 # Core Evaluation Engine
 # ---------------------------------------------------------------------------
 
@@ -720,8 +1020,11 @@ def evaluate_genome(genome: Genome, model: str, grid_cell: str,
     total_time = 0.0
     problem_results = []
 
+    # Use meta-genome prompt template if available, else default
+    prompt_template = genome.get_prompt_template() if hasattr(genome, 'get_prompt_template') else CHIMERA_EVAL_PROMPT
+
     for i, problem in enumerate(problems):
-        prompt = CHIMERA_EVAL_PROMPT.format(problem_prompt=problem["prompt"])
+        prompt = prompt_template.format(problem_prompt=problem["prompt"])
 
         t0 = time.time()
         gen = ollama_generate(model, prompt, system=system_prompt)
@@ -857,11 +1160,16 @@ def evaluate_genome_across_grid(genome: Genome, problems: list[dict],
     else:
         agg = FitnessVector()
 
+    # Use meta-genome fitness weights and aggregation method if available
+    meta = getattr(genome, 'meta_traits', {}) or {}
+    weights = genome.get_fitness_weights() if hasattr(genome, 'get_fitness_weights') else None
+    agg_method = meta.get('aggregation_method', 'weighted_sum')
+
     return {
         "genome_id": genome.genome_id,
         "grid_results": results,
         "aggregate_fitness": agg,
-        "aggregate_score": agg.aggregate(),
+        "aggregate_score": agg.aggregate(weights=weights, method=agg_method),
     }
 
 
@@ -1042,6 +1350,19 @@ def run_chimera_loop(
         ],
     })
 
+    # Record seed lineage for initial population
+    for g in population:
+        op = "seed" if g.generation == 0 and any(
+            g.traits.get("tone") == t for t in
+            ["adversarial_coach", "chaos_gremlin", "cold_analytical", "zen_master"]
+        ) else "random"
+        _record_lineage(
+            child_id=g.genome_id,
+            parent1_id="GENESIS",
+            operator=op,
+            generation=0,
+        )
+
     history = []
     best_ever = None
     best_ever_score = -1
@@ -1101,6 +1422,9 @@ def run_chimera_loop(
                 },
             })
 
+            # Archive genome to persistent MAP-ELITES table
+            _archive_elite(genome, eval_result)
+
         # --- Selection & Evolution ---
         fitness_vectors = [r["aggregate_fitness"] for r in gen_results]
         scores = [r["aggregate_score"] for r in gen_results]
@@ -1144,6 +1468,11 @@ def run_chimera_loop(
             ],
         })
 
+        # Mark Pareto front members in archive
+        if fronts and fronts[0]:
+            for idx in fronts[0]:
+                _archive_elite(population[idx], gen_results[idx], is_pareto=True)
+
         history.append({
             "generation": gen_num,
             "scores": scores,
@@ -1161,25 +1490,50 @@ def run_chimera_loop(
             for i in range(min(elitism, len(ranked))):
                 elite = copy.deepcopy(population[ranked[i]])
                 elite.generation = gen_num + 1
+                _record_lineage(
+                    child_id=elite.genome_id,
+                    parent1_id=population[ranked[i]].genome_id,
+                    operator="elite",
+                    generation=gen_num + 1,
+                )
                 next_population.append(elite)
 
             # Fill rest via tournament selection + operators
+            # Use best genome's tournament size from meta-genome (or default 3)
+            best_genome = population[ranked[0]]
+            t_size = best_genome.get_tournament_size() if hasattr(best_genome, 'get_tournament_size') else 3
+
             while len(next_population) < pop_size:
                 if random.random() < crossover_rate and len(population) >= 2:
                     # Crossover
-                    p1_idx = tournament_select(population, scores)
-                    p2_idx = tournament_select(population, scores)
+                    p1_idx = tournament_select(population, scores, tournament_size=t_size)
+                    p2_idx = tournament_select(population, scores, tournament_size=t_size)
                     while p2_idx == p1_idx:
-                        p2_idx = tournament_select(population, scores)
+                        p2_idx = tournament_select(population, scores, tournament_size=t_size)
                     child = Genome.crossover(population[p1_idx], population[p2_idx])
                     # Also mutate the crossover child slightly
                     if random.random() < 0.5:
                         child = child.mutate(mutation_rate * 0.5)
+                    _record_lineage(
+                        child_id=child.genome_id,
+                        parent1_id=population[p1_idx].genome_id,
+                        parent2_id=population[p2_idx].genome_id,
+                        operator="crossover",
+                        generation=gen_num + 1,
+                        mutation_rate=mutation_rate * 0.5 if random.random() < 0.5 else None,
+                    )
                     next_population.append(child)
                 else:
                     # Mutation
-                    parent_idx = tournament_select(population, scores)
+                    parent_idx = tournament_select(population, scores, tournament_size=t_size)
                     child = population[parent_idx].mutate(mutation_rate)
+                    _record_lineage(
+                        child_id=child.genome_id,
+                        parent1_id=population[parent_idx].genome_id,
+                        operator="mutation",
+                        generation=gen_num + 1,
+                        mutation_rate=mutation_rate,
+                    )
                     next_population.append(child)
 
             population = next_population

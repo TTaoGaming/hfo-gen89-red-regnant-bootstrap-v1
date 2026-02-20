@@ -109,8 +109,9 @@ def yield_event(
         print(f"ERROR: SSOT database not found at {db_path}", file=sys.stderr)
         sys.exit(1)
 
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
 
     # ── Get current counts for context ──
     cur = conn.execute("SELECT COUNT(*) FROM stigmergy_events")

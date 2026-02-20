@@ -200,7 +200,9 @@ def _write_p5_event(event_type: str, data: dict) -> int:
         "data": data,
     }
     c_hash = hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         conn.execute(
             "INSERT OR IGNORE INTO stigmergy_events "
@@ -262,7 +264,8 @@ def get_ssot_event_count() -> int:
     """Ring 0 cantrip: Total stigmergy events."""
     if not DB_PATH.exists():
         return 0
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         return conn.execute("SELECT COUNT(*) FROM stigmergy_events").fetchone()[0]
     finally:
@@ -273,7 +276,8 @@ def check_orphaned_nonces() -> list[dict]:
     """Ring 0 cantrip: Find perceive events without matching yields."""
     if not DB_PATH.exists():
         return []
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         perceives = conn.execute(
             "SELECT id, timestamp, data_json FROM stigmergy_events "
@@ -678,7 +682,8 @@ def phoenix_recovery(verbose: bool = True):
 
     # 3. Check SSOT integrity
     if DB_PATH.exists():
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(DB_PATH), timeout=10)
+        conn.execute("PRAGMA busy_timeout=5000")
         try:
             result = conn.execute("PRAGMA integrity_check").fetchone()
             ok = result[0] == "ok"
@@ -719,7 +724,8 @@ def ssot_audit(verbose: bool = True) -> dict:
             print("  SSOT not found!")
         return {"error": "SSOT not found"}
 
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10)
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         # Event type breakdown
         types = conn.execute(

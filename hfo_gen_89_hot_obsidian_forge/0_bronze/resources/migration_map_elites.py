@@ -475,8 +475,9 @@ SEED_DATA = [
 
 def run_migration(db_path: str, dry_run: bool = False):
     """Run the MAP-Elites migration against the SSOT database."""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     c = conn.cursor()
 

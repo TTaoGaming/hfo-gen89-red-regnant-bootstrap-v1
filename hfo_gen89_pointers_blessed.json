@@ -132,6 +132,106 @@
     "daemon.p5_pyre_praetorian": {
       "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p5_pyre_praetorian.py",
       "desc": "P5 Pyre Praetorian daemon — resource governance, LifecycleManager, fail-closed gates, Three Rings, Phoenix Protocol, governed eval with SW-4 receipts"
+    },
+    "gemini.mcp_server": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_gemini_mcp_server.py",
+      "desc": "Google Gemini MCP server — chat, think, search-grounded, doc analysis, batch"
+    },
+    "daemon.background": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_background_daemon.py",
+      "desc": "Background daemon — SSOT enrichment, web research, code eval, stigmergy patrol"
+    },
+    "daemon.singer": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_singer_daemon.py",
+      "desc": "SINGER OF STRIFE AND SPLENDOR — P4 Red Regnant daemon, sings dual songs into stigmergy on loop, reports errors/health"
+    },
+    "daemon.song_prospector": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_song_prospector.py",
+      "desc": "SONG PROSPECTOR — P4 background daemon, uses high-intelligence Ollama LLM to prospect SSOT docs for new strife/splendor song proposals, writes CloudEvent stigmergy, reviewable via --status"
+    },
+    "mission.braided_thread_gen89": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/braided_mission_thread_hfo_gen89_v1.yaml",
+      "desc": "Braided Mission Thread Gen89 v1 — Income Mode: 3 strands (Omega/Alpha/HFO), 8-stage pipeline, Week 1 sprint"
+    },
+    "diataxis.pipeline_explanation": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/EXPLANATION_8_STAGE_INCARNATION_PIPELINE_SEMANTIC_GROUNDING.md",
+      "desc": "E-G89-PIPELINE-01 — Gold diataxis EXPLANATION of the 8-stage incarnation pipeline with dense semantic grounding"
+    },
+    "diataxis.rosetta_stone": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/REFERENCE_GALOIS_ALIAS_LATTICE_4PHASE_ROSETTA_STONE.md",
+      "desc": "R-G89-01 — Galois Alias Lattice, the 4-Phase Rosetta Stone (10 frameworks × 4 slots)"
+    },
+    "audit.p4_braided_thread_gen89": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/P4_ADVERSARIAL_AUDIT_BRAIDED_THREAD_GEN89_V1.md",
+      "desc": "P4 Red Regnant adversarial audit — 12 weaknesses, NATARAJA_Score=0.0, 35% incarnation fitness, 11 GRUDGE_GUARDs"
+    },
+    "diataxis.l13_paradigm_correction": {
+      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/EXPLANATION_L13_PARADIGM_CORRECTION_HUMAN_IS_P5_NATARAJA_DANCE_V1.md",
+      "desc": "E-G89-L13-01 — Gold diataxis EXPLANATION: L13 paradigm correction, human IS P5, NATARAJA > 0, 5 timestamped context capsules with SSOT proof"
+    },
+    "sandbox.launcher": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_sandbox_launcher.py",
+      "desc": "Correct-by-Construction 4-Port Sandbox Launcher — P5→P4→P2 boot with safety spine, VRAM budget, and P5-gates-P2 watchdog"
+    },
+    "tui.daemon_chat": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_daemon_chat_tui.py",
+      "desc": "Option B Textual TUI — live stigmergy tail, 8-port commander chat via Ollama, all exchanges logged as CloudEvents"
+    },
+    "web.daemon_chat": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_daemon_chat_web.py",
+      "desc": "HTML web app — aiohttp SPA with live stigmergy feed, 8-port Ollama chat, FTS search, opens in browser"
+    },
+    "env.config": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_env_config.py",
+      "desc": "Centralized .env config loader — typed dataclasses for daemon flags, resource budgets, port models, stigmergy proof"
+    },
+    "ref.24x7_daemon_bestpractices": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/2026-02-19_REFERENCE_24x7_DAEMON_LOCAL_AI_RESOURCE_GOVERNANCE_BEST_PRACTICES.md",
+      "desc": "REFERENCE: 24/7 Local AI Daemon Operations with Resource Governance Best Practices — 8 sections, VRAM tiers, daemon priority, .env matrix, crash recovery"
+    },
+    "p7.orchestrator": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p7_orchestrator.py",
+      "desc": "P7 Spider Sovereign Fleet Orchestrator — health dashboard, GPU queue, coordinated fleet start/stop, NPU enforcement"
+    },
+    "p7.tremorsense": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p7_tremorsense.py",
+      "desc": "P7 Spider Sovereign TREMORSENSE spell — per-minute uptime audit via stigmergy receipts, hourly daemon mode, 24h grid"
+    },
+    "p7.foresight": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p7_foresight.py",
+      "desc": "P7 Spider Sovereign FORESIGHT spell — Meadows L1-L13 belief space divination, Mermaid/text/JSON, heuristic engine"
+    },
+    "p7.foresight_daemon": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p7_foresight_daemon.py",
+      "desc": "P7 FORESIGHT AI Daemon — hourly Gemini 2.5 Flash intelligent Meadows L1-L13 mapping, markdown reports + stigmergy"
+    },
+    "agent.p7_cartographer": {
+      "path": ".github/agents/hfo_gen_89_p7_cartographer_v1.agent.md",
+      "desc": "P7 Spider Sovereign Cartographer custom agent definition for VS Code Copilot"
+    },
+    "p7.spell_gate": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p7_spell_gate.py",
+      "desc": "P7 Spider Sovereign SPELL GATE — daemon lifecycle C2: summon/incarnate/scrying/banish/sending, CloudEvent trail, watchdog"
+    },
+    "daemon.singer_ai": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_singer_ai_daemon.py",
+      "desc": "SINGER OF STRIFE AND SPLENDOR (AI) — P4 Red Regnant AI-powered daemon, qwen2.5:3b minute-by-minute pattern/antipattern singing"
+    },
+    "daemon.p5_pyre": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p5_daemon.py",
+      "desc": "PYRE PRAETORIAN — P5 Phoenix daemon: T1-T6 patrol tasks, spell gate fleet resurrection, Task Scheduler persistence, P4-P5 dance"
+    },
+    "p0.true_seeing": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p0_true_seeing.py",
+      "desc": "P0 TRUE_SEEING — Lidless Legion Divination 6th: AST system introspection daemon (--daemon --interval 60), hardcoded path detection, fleet validation, CloudEvent stigmergy"
+    },
+    "p0.greater_scry": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_p0_greater_scry.py",
+      "desc": "P0 GREATER_SCRY — Lidless Legion Divination 7th: Web intelligence daemon driven by P7 seal/sphere targets, DuckDuckGo search every 10 min, CloudEvent stigmergy"
+    },
+    "map_elite.commanders": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_map_elite_commanders.py",
+      "desc": "MAP-Elite Port Commander Framework v1.0: 8 ports × 3 tiers (intelligence/speed/cost), ACO pheromone engine, scatter-gather coordinator, standardized signal_metadata schema, apex_invoke for any port+tier"
     }
   }
 }
