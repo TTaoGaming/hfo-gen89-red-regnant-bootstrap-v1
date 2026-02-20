@@ -106,6 +106,7 @@ class GitOpsDaemon:
                 cwd=str(cwd),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False
             )
             return result.returncode, result.stdout, result.stderr
