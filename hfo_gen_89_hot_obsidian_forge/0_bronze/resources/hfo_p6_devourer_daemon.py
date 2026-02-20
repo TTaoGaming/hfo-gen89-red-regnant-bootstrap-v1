@@ -878,10 +878,9 @@ def run_d5_disseminate(
 
         # Emit enrichment event with signal_metadata
         sig_meta = build_signal_metadata(
-            stage="D5_DISSEMINATE",
             model=cycle_metrics.get("model", HEAVY_MODEL) if cycle_metrics else HEAVY_MODEL,
-            eval_count=cycle_metrics.get("eval_count", 0) if cycle_metrics else 0,
-            doc_id=doc_id,
+            tokens_out=cycle_metrics.get("eval_count", 0) if cycle_metrics else 0,
+            task_type="disseminate",
         )
         write_event(conn, EVT_ENRICHMENT, f"doc:{doc_id}:enriched", {
             "doc_id": doc_id,
@@ -1259,9 +1258,9 @@ def run_cycle(
 
     if conn and not dry_run:
         sig_meta = build_signal_metadata(
-            stage="CYCLE_PULSE",
             model=heavy_model,
-            eval_count=results["total_eval_tokens"],
+            tokens_out=results["total_eval_tokens"],
+            task_type="cycle_pulse",
         )
         write_event(conn, EVT_PULSE, "devourer:cycle:complete", {
             "targets_found": results["targets_found"],

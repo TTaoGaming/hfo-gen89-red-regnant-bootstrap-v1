@@ -20,6 +20,7 @@ Usage:
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -96,13 +97,16 @@ def emit_stigmergy(conn: sqlite3.Connection, event_type: str, subject: str, data
         "data": data
     }
     
+    data_json = json.dumps(payload)
+    content_hash = hashlib.sha256(data_json.encode("utf-8")).hexdigest()
+    
     cursor = conn.cursor()
     cursor.execute(
         """
-        INSERT INTO stigmergy_events (id, event_type, timestamp, subject, source, data_json)
+        INSERT INTO stigmergy_events (event_type, timestamp, subject, source, data_json, content_hash)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (event_id, event_type, now, subject, payload["source"], json.dumps(payload))
+        (event_type, now, subject, payload["source"], data_json, content_hash)
     )
     conn.commit()
     return cursor.lastrowid
