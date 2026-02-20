@@ -201,22 +201,22 @@ class GitOpsDaemon:
         report["status"] = "committed"
         print(f"  [+] Committed {len(safe_files)} files.")
 
-        # 3. Pull rebase
+        # 3. Pull rebase (skip if there are unstaged changes that can't be stashed cleanly)
         print("  [+] Pulling remote changes...")
-        # Stash unstaged changes before pulling
-        stash_code, stash_out, stash_err = self.run_cmd(["git", "stash", "push", "-m", "gitops_auto_stash"])
-        stashed = stash_code == 0 and "No local changes to save" not in stash_out
-
-        code, out, err = self.run_cmd(["git", "pull", "--rebase"])
-        
-        if stashed:
-            self.run_cmd(["git", "stash", "pop"])
-
-        if code != 0:
-            report["errors"].append(f"git pull failed: {out} {err}")
-            report["status"] = "pull_error"
-            self._emit_error(report)
-            return report
+        # Check if there are unstaged changes to binary or non-safe files (these block pull)
+        status_code, status_out, _ = self.run_cmd(["git", "status", "--porcelain"])
+        has_unstaged = any(
+            line[1] == 'M' for line in status_out.splitlines() if len(line) >= 2
+        )
+        if has_unstaged:
+            print("  [~] Skipping pull: unstaged modifications in repo (silver/gold files). Pushing only.")
+        else:
+            code, out, err = self.run_cmd(["git", "pull", "--rebase"])
+            if code != 0:
+                report["errors"].append(f"git pull failed: {out} {err}")
+                report["status"] = "pull_error"
+                self._emit_error(report)
+                return report
 
         # 4. Push
         print("  [+] Pushing to remote...")
