@@ -848,6 +848,9 @@ class ResourceGovernor:
                     "cycle": self.enforce_call_count,
                 })
 
+            cycle_data["evicted_count"] = len(evicted_models)
+            return cycle_data
+
     def wait_for_gpu_headroom(
         self,
         snapshot: Optional["ResourceSnapshot"] = None,
