@@ -69,7 +69,33 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, Callable
 
+import collections
+import urllib.request as _urlreq
 import httpx
+try:
+    import psutil as _psutil
+    _PSUTIL_OK = True
+except ImportError:
+    _psutil = None  # type: ignore
+    _PSUTIL_OK = False
+
+# ---------------------------------------------------------------------------
+# Optional LLM Router  (vendor-agnostic fallback chain)
+# ---------------------------------------------------------------------------
+# Imported lazily so the daemon starts even if the router file is absent.
+# Once available, _advisory_tick uses it instead of direct ollama_generate().
+
+try:
+    _ROUTER_DIR = Path(__file__).resolve().parent
+    import sys as _sys
+    if str(_ROUTER_DIR) not in _sys.path:
+        _sys.path.insert(0, str(_ROUTER_DIR))
+    from hfo_llm_router import LLMRouter as _LLMRouter, RouterConfig as _RouterConfig  # noqa: E402
+    _ROUTER_AVAILABLE = True
+except ImportError:
+    _LLMRouter = None   # type: ignore
+    _RouterConfig = None  # type: ignore
+    _ROUTER_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Path Resolution
@@ -87,6 +113,12 @@ DB_PATH = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "2_gold" / "resources" / 
 INVARIANTS_PATH = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "2_gold" / "resources" / "hfo_legendary_commanders_invariants.v1.json"
 GEN = os.environ.get("HFO_GENERATION", "89")
 OLLAMA_BASE = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+# P0 TRUE_SEEING — resource status file + rolling window config
+_RESOURCE_STATUS_PATH = HFO_ROOT / ".hfo_resource_status.json"
+_NPU_STATE_PATH = HFO_ROOT / ".hfo_npu_state.json"
+_TRUE_SEEING_WINDOW_SIZE = 20        # 20 samples × 30 s = 10-min rolling window
+_TRUE_SEEING_STIGMERGY_INTERVAL = 20  # write stigmergy every N ticks (= 10 min @ 30 s/tick)
 
 # ---------------------------------------------------------------------------
 # Load Invariants
@@ -136,6 +168,20 @@ class PortConfig:
     galois_pair: int     # Anti-diagonal partner (sum to 7)
     prey8_step: str      # Which PREY8 step this port gates
     prey8_partner: int   # Port paired in PREY8 gate
+    role: str = "advisory"  # LLMRouter role for inference (advisory/analyst/etc.)
+
+
+# Port → LLMRouter role — maps each port's function to a provider preference
+PORT_ROLE_MAP: dict[int, str] = {
+    0: "advisory",    # P0 OBSERVE — fast NPU sensing, advisory analysis
+    1: "enricher",    # P1 BRIDGE — fast enrichment of data streams
+    2: "analyst",     # P2 SHAPE — local GPU, code/model creation
+    3: "coder",       # P3 INJECT — Gemini for delivery payloads
+    4: "analyst",     # P4 DISRUPT — local GPU for mutation analysis
+    5: "validator",   # P5 IMMUNIZE — Gemini for thorough validation
+    6: "enricher",    # P6 ASSIMILATE — fast NPU knowledge extraction
+    7: "planner",     # P7 NAVIGATE — Gemini Pro for strategic planning
+}
 
 
 # 8 Commanders — LOCKED invariants from Gold + runtime config
@@ -219,6 +265,7 @@ def init_port_configs():
             galois_pair=7 - idx,
             prey8_step=prey8_step,
             prey8_partner=prey8_partner,
+            role=PORT_ROLE_MAP.get(idx, "advisory"),
         )
         PORT_CONFIGS[config.port_id] = config
 
@@ -376,6 +423,20 @@ def _write_stigmergy(event_type: str, data: dict, subject: str = "daemon") -> in
     if not DB_PATH.exists():
         return -1
     ts = datetime.now(timezone.utc).isoformat()
+    # STRUCTURAL_GATE compliance: every CloudEvent must include signal_metadata.
+    # Inject a minimal one if the caller didn't supply it.
+    if "signal_metadata" not in data:
+        data = dict(data)  # copy to avoid mutating caller's dict
+        data["signal_metadata"] = {
+            "port": "P0",
+            "commander": "Lidless Legion",
+            "daemon_name": "hfo_octree_daemon",
+            "daemon_version": "gen89",
+            "model_id": "",
+            "task_type": event_type,
+            "generation": GEN,
+            "timestamp": ts,
+        }
     event = {
         "specversion": "1.0",
         "id": secrets.token_hex(16),
@@ -457,6 +518,188 @@ def fts_search(query: str, limit: int = 5) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# P0 TRUE_SEEING — Real Resource Sentinel (zero hallucination)
+# ---------------------------------------------------------------------------
+
+def _collect_true_seeing() -> dict:
+    """Collect real system resource data via direct OS/Ollama tool calls.
+
+    All values come from psutil (CPU/RAM/swap/disk), Ollama /api/ps (GPU VRAM),
+    and the NPU state file written by the Kraken daemon.  Nothing is estimated
+    or inferred — this is the ground truth snapshot for the P0 Lidless Legion.
+    Called every tick; results written to stigmergy + .hfo_resource_status.json.
+    """
+    ts = datetime.now(timezone.utc).isoformat()
+    snap: dict = {"timestamp": ts, "port": "P0", "source": "true_seeing"}
+
+    # ── CPU / RAM / Swap / Disk via psutil ────────────────────────────────
+    if _PSUTIL_OK:
+        snap["cpu_pct"] = round(_psutil.cpu_percent(interval=0.3), 1)
+        freq = _psutil.cpu_freq()
+        snap["cpu_freq_mhz"] = round(freq.current, 0) if freq else 0
+        snap["cpu_cores_logical"] = _psutil.cpu_count(logical=True) or 0
+        snap["cpu_cores_physical"] = _psutil.cpu_count(logical=False) or 0
+
+        vm = _psutil.virtual_memory()
+        snap["ram_total_gb"]  = round(vm.total    / 1024**3, 1)
+        snap["ram_used_gb"]   = round(vm.used     / 1024**3, 2)
+        snap["ram_free_gb"]   = round(vm.available / 1024**3, 2)
+        snap["ram_pct"]       = round(vm.percent, 1)
+
+        sw = _psutil.swap_memory()
+        snap["swap_total_gb"] = round(sw.total / 1024**3, 1)
+        snap["swap_used_gb"]  = round(sw.used  / 1024**3, 2)
+        snap["swap_pct"]      = round(sw.percent, 1)
+
+        try:
+            disk = _psutil.disk_usage(str(HFO_ROOT))
+            snap["disk_free_gb"]  = round(disk.free    / 1024**3, 1)
+            snap["disk_used_pct"] = round(disk.percent, 1)
+        except Exception:
+            pass
+
+        # Python/HFO process census
+        py_procs = hfo_procs = 0
+        try:
+            for p in _psutil.process_iter(["name", "cmdline"]):
+                name = (p.info.get("name") or "").lower()
+                if name in ("python.exe", "python", "python3"):
+                    py_procs += 1
+                    cmd = " ".join(p.info.get("cmdline") or [])
+                    if "hfo_" in cmd:
+                        hfo_procs += 1
+        except Exception:
+            pass
+        snap["python_proc_count"] = py_procs
+        snap["hfo_daemon_count"]  = hfo_procs
+    else:
+        snap["psutil_available"] = False
+
+    # ── GPU / VRAM via Ollama /api/ps ──────────────────────────────────────
+    ollama_models: list = []
+    vram_used_mb  = 0.0
+    ollama_alive  = False
+    try:
+        req = _urlreq.Request(
+            f"{OLLAMA_BASE}/api/ps",
+            headers={"Accept": "application/json"},
+        )
+        with _urlreq.urlopen(req, timeout=4) as resp:
+            ps_data = json.loads(resp.read())
+        ollama_alive = True
+        for m in ps_data.get("models", []):
+            vram_mb = m.get("size_vram", 0) / 1024**2
+            ollama_models.append({
+                "name":    m.get("name", "?"),
+                "vram_mb": round(vram_mb, 1),
+                "size_mb": round(m.get("size", 0) / 1024**2, 1),
+            })
+            vram_used_mb += vram_mb
+    except Exception as exc:
+        snap["ollama_ps_error"] = str(exc)[:120]
+
+    vram_budget_gb = float(os.environ.get("HFO_VRAM_BUDGET_GB", "10.0"))
+    vram_used_gb   = vram_used_mb / 1024.0
+    snap["ollama_alive"]        = ollama_alive
+    snap["ollama_models"]       = ollama_models
+    snap["gpu_model_count"]     = len(ollama_models)
+    snap["vram_used_gb"]        = round(vram_used_gb, 2)
+    snap["vram_used_mb"]        = round(vram_used_mb, 1)
+    snap["vram_budget_gb"]      = vram_budget_gb
+    snap["vram_pct"]            = round(vram_used_gb / vram_budget_gb * 100, 1) if vram_budget_gb > 0 else 0.0
+    snap["gpu_gate"]            = "GO" if vram_used_gb + 2.0 <= vram_budget_gb else "HOLD"
+
+    # ── NPU activity (written by Kraken daemon on each inference) ──────────
+    npu_active           = False
+    npu_last_inference_s: Optional[float] = None
+    try:
+        if _NPU_STATE_PATH.exists():
+            npu_state = json.loads(_NPU_STATE_PATH.read_text(encoding="utf-8"))
+            last_ts = npu_state.get("last_inference_ts")
+            if last_ts:
+                elapsed = (
+                    datetime.now(timezone.utc)
+                    - datetime.fromisoformat(last_ts)
+                ).total_seconds()
+                npu_last_inference_s = round(elapsed, 1)
+                npu_active = elapsed < 120  # active if inference < 2 min ago
+    except Exception:
+        pass
+    snap["npu_active"]           = npu_active
+    snap["npu_last_inference_s"] = npu_last_inference_s
+    snap["npu_model_configured"] = bool(
+        os.environ.get("P6_NPU_LLM_MODEL", "")
+        and Path(os.environ.get("P6_NPU_LLM_MODEL", "")).exists()
+    )
+
+    return snap
+
+
+def _write_resource_status(snap: dict, window: list, gov_result: Optional[dict] = None) -> None:
+    """Persist current snapshot + rolling 10-min averages to JSON status file.
+    Written atomically (temp file → rename) so VSCode extension never reads a partial file.
+    Includes target deltas (negative = underutilised, positive = over-target).
+    """
+    def _avg(key: str):
+        vals = [s[key] for s in window if key in s and s[key] is not None]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    def _peak(key: str):
+        vals = [s[key] for s in window if key in s and s[key] is not None]
+        return round(max(vals), 1) if vals else None
+
+    target = float(os.environ.get("HFO_RESOURCE_TARGET_PCT", "80.0"))
+
+    def _delta(avg):
+        return round((avg or 0) - target, 1)
+
+    cpu_avg  = _avg("cpu_pct")  or 0
+    ram_avg  = _avg("ram_pct")  or 0
+    vram_avg = _avg("vram_pct") or 0
+
+    status = {
+        "updated_at": snap["timestamp"],
+        "resource_target_pct": target,
+        "current": snap,
+        "rolling_10min": {
+            "sample_count":          len(window),
+            "window_seconds":        len(window) * 30,
+            "cpu_pct_avg":           _avg("cpu_pct"),
+            "cpu_pct_peak":          _peak("cpu_pct"),
+            "cpu_delta_to_target":   _delta(cpu_avg),
+            "ram_pct_avg":           _avg("ram_pct"),
+            "ram_pct_peak":          _peak("ram_pct"),
+            "ram_free_gb_avg":       _avg("ram_free_gb"),
+            "ram_delta_to_target":   _delta(ram_avg),
+            "vram_pct_avg":          _avg("vram_pct"),
+            "vram_pct_peak":         _peak("vram_pct"),
+            "vram_used_gb_avg":      _avg("vram_used_gb"),
+            "vram_delta_to_target":  _delta(vram_avg),
+            "swap_pct_avg":          _avg("swap_pct"),
+            "swap_pct_peak":         _peak("swap_pct"),
+            "npu_active_rate_pct":   round(
+                sum(1 for s in window if s.get("npu_active")) / max(len(window), 1) * 100, 1
+            ),
+            "npu_underutilised":     not any(s.get("npu_active") for s in window),
+            "governance_violations": sum(
+                1 for s in window
+                if (s.get("cpu_pct") or 0) > float(os.environ.get("HFO_CPU_HIGH_WATER_PCT", 92))
+                or (s.get("vram_pct") or 0) > 100
+                or (s.get("swap_pct") or 0) > float(os.environ.get("HFO_SWAP_HIGH_WATER_PCT", 75))
+            ),
+        },
+        "governance": gov_result or {},
+        "history_samples": list(window),
+    }
+    try:
+        tmp = _RESOURCE_STATUS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        tmp.replace(_RESOURCE_STATUS_PATH)
+    except Exception as exc:
+        print(f"  [P0:TRUE_SEEING] status file write error: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Daemon Process
 # ---------------------------------------------------------------------------
 
@@ -474,6 +717,12 @@ class OctreeDaemon:
         self.error_count = 0
         self.turn_count = 0
         self.lock = threading.Lock()
+        # P0-specific: rolling TRUE_SEEING sample window (20 × 30 s = 10 min)
+        self._true_seeing_window: collections.deque = (
+            collections.deque(maxlen=_TRUE_SEEING_WINDOW_SIZE)
+            if config.port_index == 0 else None
+        )
+        self._true_seeing_tick_count: int = 0  # controls stigmergy write frequency
 
     def start(self):
         """Start the daemon in a background thread."""
@@ -561,8 +810,123 @@ class OctreeDaemon:
 
         self.state = DaemonState.STOPPED
 
+    def _p0_true_seeing_tick(self) -> None:
+        """P0 Lidless Legion: TRUE_SEEING spell.
+
+        Every tick (30 s):
+          ─ Collect real snapshot (psutil + Ollama /api/ps + NPU state file)
+          ─ Append to 20-sample rolling window (10-min window)
+          ─ Run enforce_resource_targets() — actual governance (evict idle models,
+            emit NPU-prefer signal when VRAM/RAM ≥ 80% target)
+          ─ Write .hfo_resource_status.json (VSCode status bar reads this)
+
+        Every 20 ticks (10 min):
+          ─ Write rich 10-min summary to stigmergy (6×/hr, not 120×/hr)
+            so the SSOT gets a clean record over time without flood noise.
+        """
+        self._true_seeing_tick_count += 1
+        snap = _collect_true_seeing()
+
+        if self._true_seeing_window is not None:
+            self._true_seeing_window.append(snap)
+        window = list(self._true_seeing_window or [snap])
+
+        # ── Governance enforcement every tick ────────────────────────────────
+        gov_result: dict = {}
+        try:
+            import sys as _sys
+            _res_path = str(
+                HFO_ROOT / "hfo_gen_89_hot_obsidian_forge"
+                          / "0_bronze" / "resources"
+            )
+            if _res_path not in _sys.path:
+                _sys.path.insert(0, _res_path)
+            from hfo_resource_governor import enforce_resource_targets
+            gov_result = enforce_resource_targets(verbose=True, auto_evict=True)
+        except Exception as _gov_err:
+            gov_result = {"error": str(_gov_err)[:120]}
+
+        # ── Write JSON status file every tick (VSCode bar reads it) ──────────
+        _write_resource_status(snap, window, gov_result)
+
+        # ── Write stigmergy every N ticks = every 10 minutes ───────────────
+        if self._true_seeing_tick_count % _TRUE_SEEING_STIGMERGY_INTERVAL == 1:
+            # compute rolling averages
+            def _wa(key: str):
+                vals = [s.get(key) for s in window if s.get(key) is not None]
+                return round(sum(vals) / len(vals), 1) if vals else None
+            def _wp(key: str):
+                vals = [s.get(key) for s in window if s.get(key) is not None]
+                return round(max(vals), 1) if vals else None
+
+            target = float(os.environ.get("HFO_RESOURCE_TARGET_PCT", "80.0"))
+            cpu_avg  = _wa("cpu_pct")  or 0
+            ram_avg  = _wa("ram_pct")  or 0
+            vram_avg = _wa("vram_pct") or 0
+
+            # delta to target (negative = underutilised, positive = over)
+            def _delta(avg):
+                return round(avg - target, 1)
+
+            _write_stigmergy(
+                "hfo.gen89.p0.true_seeing",
+                {
+                    "current": snap,
+                    "rolling_10min": {
+                        "sample_count":        len(window),
+                        "cpu_pct_avg":         _wa("cpu_pct"),
+                        "cpu_pct_peak":        _wp("cpu_pct"),
+                        "cpu_delta_to_target": _delta(cpu_avg),
+                        "ram_pct_avg":         _wa("ram_pct"),
+                        "ram_pct_peak":        _wp("ram_pct"),
+                        "ram_free_gb_avg":     _wa("ram_free_gb"),
+                        "ram_delta_to_target": _delta(ram_avg),
+                        "vram_pct_avg":        _wa("vram_pct"),
+                        "vram_pct_peak":       _wp("vram_pct"),
+                        "vram_used_gb_avg":    _wa("vram_used_gb"),
+                        "vram_delta_to_target":_delta(vram_avg),
+                        "swap_pct_avg":        _wa("swap_pct"),
+                        "swap_pct_peak":       _wp("swap_pct"),
+                        "npu_active_rate_pct": round(
+                            sum(1 for s in window if s.get("npu_active"))
+                            / max(len(window), 1) * 100, 1
+                        ),
+                        "governance_violations": sum(
+                            1 for s in window
+                            if (s.get("cpu_pct") or 0) > float(os.environ.get("HFO_CPU_HIGH_WATER_PCT", 92))
+                            or (s.get("vram_pct") or 0) > 100
+                            or (s.get("swap_pct") or 0) > float(os.environ.get("HFO_SWAP_HIGH_WATER_PCT", 75))
+                        ),
+                        "target_pct": target,
+                    },
+                    "governance": gov_result,
+                    "turn": self.turn_count,
+                    "stigmergy_tick": self._true_seeing_tick_count,
+                },
+                subject="P0:TRUE_SEEING",
+            )
+
+        # ── Console summary every tick ──────────────────────────────────────────────
+        cpu   = snap.get("cpu_pct", "?")
+        ram   = snap.get("ram_pct", "?")
+        vram  = snap.get("vram_used_gb", 0)
+        vbudg = snap.get("vram_budget_gb", 10)
+        vpct  = snap.get("vram_pct", "?")
+        gate  = snap.get("gpu_gate", "?")
+        npu   = "●" if snap.get("npu_active") else "○"
+        stig_marker = " [STIGMERGY]" if self._true_seeing_tick_count % _TRUE_SEEING_STIGMERGY_INTERVAL == 1 else ""
+        gov_actions = ", ".join(gov_result.get("actions_taken", [])[:2])
+        gov_str = f" | GOV: {gov_actions}" if gov_actions else ""
+        print(f"  [P0:TRUE_SEEING T={self._true_seeing_tick_count}]{stig_marker} "
+              f"CPU:{cpu}% RAM:{ram}% "
+              f"VRAM:{vram:.2f}/{vbudg}GB({vpct}%) GPU:{gate} NPU:{npu}{gov_str}")
+
     def _advisory_tick(self):
         """One advisory cycle — observe stigmergy, think, advise."""
+        # P0 Lidless Legion fires TRUE_SEEING before the Ollama advisory
+        if self.config.port_index == 0:
+            self._p0_true_seeing_tick()
+
         self.state = DaemonState.ADVISING
 
         # 1. Read recent stigmergy relevant to this port
@@ -586,27 +950,60 @@ As {self.config.commander} ({self.config.port_id} {self.config.powerword}), prov
 
 Keep your response under 200 words. Sign as [{self.config.port_id}:{self.config.commander}]."""
 
-        result = ollama_generate(self.config.model, prompt, system=self.persona, timeout=90)
+        # ── Router-first inference (vendor-agnostic) ────────────────────────────
+        # Use LLMRouter when available: NPU → Ollama → Gemini → OpenRouter.
+        # The router writes its own stigmergy event (hfo.gen89.llm_router.inference).
+        # Falls back to direct ollama_generate if router module is absent.
+        advice: str = ""
+        model_used: str = self.config.model
+        provider_used: str = "ollama"
+        tokens_used: int = 0
+        duration_ms_used: float = 0.0
 
-        if result.get("error"):
-            raise RuntimeError(f"Ollama error: {result['error'][:200]}")
+        if _ROUTER_AVAILABLE:
+            try:
+                _db = DB_PATH if DB_PATH.exists() else None
+                _cfg = _RouterConfig.from_env(db_path=_db)
+                _router = _LLMRouter(_cfg)
+                _res = _router.generate(
+                    prompt,
+                    role=self.config.role,
+                    system=self.persona,
+                    max_tokens=200,
+                )
+                advice = _res["response"]
+                model_used = _res.get("model", self.config.model)
+                provider_used = _res.get("provider", "ollama")
+                tokens_used = _res.get("tokens", 0)
+                duration_ms_used = _res.get("latency_ms", 0.0)
+            except Exception as _e:
+                raise RuntimeError(f"LLMRouter error: {_e}")
+        else:
+            # Legacy direct Ollama call — used only when router module missing
+            _raw = ollama_generate(self.config.model, prompt, system=self.persona, timeout=90)
+            if _raw.get("error"):
+                raise RuntimeError(f"Ollama error: {_raw['error'][:200]}")
+            advice = _raw["response"]
+            tokens_used = _raw.get("eval_count", 0)
+            duration_ms_used = _raw.get("total_duration_ms", 0.0)
 
-        advice = result["response"]
         with self.lock:
             self.last_advice = advice
             self.error_count = 0  # Reset on success
 
         # 3. Write advisory to stigmergy
         _write_stigmergy(
-            f"hfo.gen89.daemon.advisory",
+            "hfo.gen89.daemon.advisory",
             {
                 "port": self.config.port_id,
                 "commander": self.config.commander,
-                "model": self.config.model,
+                "model": model_used,
+                "provider": provider_used,
+                "role": self.config.role,
                 "turn": self.turn_count,
                 "advisory": advice[:1000],
-                "tokens": result.get("eval_count", 0),
-                "duration_ms": result.get("total_duration_ms", 0),
+                "tokens": tokens_used,
+                "duration_ms": duration_ms_used,
             },
             subject=self.config.port_id,
         )

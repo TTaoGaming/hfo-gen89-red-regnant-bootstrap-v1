@@ -1,0 +1,20 @@
+{
+  "name": "hfo-resource-bar",
+  "displayName": "HFO Resource Monitor",
+  "description": "Real-time CPU/RAM/VRAM/NPU status bar from P0 TRUE_SEEING (Gen89)",
+  "version": "1.0.0",
+  "publisher": "hfo",
+  "license": "MIT",
+  "engines": { "vscode": "^1.74.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "hfoResourceBar.showDetails",
+        "title": "HFO: Show Resource Details"
+      }
+    ]
+  }
+}

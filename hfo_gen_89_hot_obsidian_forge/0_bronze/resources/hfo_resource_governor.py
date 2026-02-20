@@ -59,9 +59,25 @@ OLLAMA_BASE = os.environ.get("OLLAMA_BASE", "http://localhost:11434")
 # 10 GB = ~80 % of the ~12-13 GB we've observed being addressable before crashes.
 VRAM_BUDGET_GB: float = float(os.environ.get("HFO_VRAM_BUDGET_GB", "10.0"))
 
-# RAM safety threshold — pause new GPU work when RAM usage is above this level.
-# At 92% (2.5 GB free on 31.5 GB system) we are dangerously low.
-RAM_HIGH_WATER_PCT: float = float(os.environ.get("HFO_RAM_HIGH_WATER_PCT", "85.0"))
+# ── 80 % utilisation target ───────────────────────────────────────────────────
+# All resources are governed to an 80% steady-state ceiling.
+# Above that, new GPU work is throttled and idle models are evicted.
+# The target can be tuned via HFO_RESOURCE_TARGET_PCT (default 80).
+RESOURCE_TARGET_PCT: float = float(os.environ.get("HFO_RESOURCE_TARGET_PCT", "80.0"))
+
+# VRAM target = RESOURCE_TARGET_PCT of budget.  Headroom = budget * (1 - target/100).
+# At 10 GB budget and 80% target: target = 8 GB used, headroom = 2 GB.
+VRAM_TARGET_GB: float = VRAM_BUDGET_GB * RESOURCE_TARGET_PCT / 100.0
+VRAM_HEADROOM_MIN_GB: float = VRAM_BUDGET_GB - VRAM_TARGET_GB  # = 2.0 GB at defaults
+
+# RAM safety threshold — pause new GPU work when RAM usage is above the target.
+RAM_HIGH_WATER_PCT: float = float(os.environ.get("HFO_RAM_HIGH_WATER_PCT", str(RESOURCE_TARGET_PCT)))
+
+# CPU ceiling — stall new GPU inferences when CPU is saturated.
+CPU_HIGH_WATER_PCT: float = float(os.environ.get("HFO_CPU_HIGH_WATER_PCT", "92.0"))
+
+# Swap high-water — warn and throttle when pagefile is heavily used.
+SWAP_HIGH_WATER_PCT: float = float(os.environ.get("HFO_SWAP_HIGH_WATER_PCT", "75.0"))
 
 # Max seconds to wait for VRAM headroom before giving up + fallback to NPU.
 GPU_SLOT_TIMEOUT_S: int = int(os.environ.get("HFO_GPU_SLOT_TIMEOUT_S", "120"))
@@ -70,12 +86,9 @@ GPU_SLOT_TIMEOUT_S: int = int(os.environ.get("HFO_GPU_SLOT_TIMEOUT_S", "120"))
 # 1 = serialized (safest — prevents VRAM spikes from concurrent loading).
 GPU_MAX_CONCURRENT: int = int(os.environ.get("HFO_GPU_MAX_CONCURRENT", "1"))
 
-# Minimum free VRAM headroom (GB) required before allowing a new inference.
-# 2.0 GB leaves room for OS + one 1.2B model buffer.
-VRAM_HEADROOM_MIN_GB: float = 2.0
-
 # How long between polls when waiting for headroom (seconds).
-POLL_INTERVAL_S: float = 5.0
+# 3 s is responsive enough without burning CPU in the polling loop.
+POLL_INTERVAL_S: float = 3.0
 
 # Poll interval for the background monitor thread.
 MONITOR_INTERVAL_S: float = 30.0
@@ -178,7 +191,7 @@ def get_resource_snapshot() -> ResourceSnapshot:
         gpu_p = "CRITICAL"
     elif vram_pct >= 90:
         gpu_p = "HIGH"
-    elif vram_pct >= 75:
+    elif vram_pct >= RESOURCE_TARGET_PCT:   # 80 %
         gpu_p = "MODERATE"
     else:
         gpu_p = "OK"
@@ -186,9 +199,9 @@ def get_resource_snapshot() -> ResourceSnapshot:
     ram_pct = vm.percent
     if ram_pct >= 95:
         ram_p = "CRITICAL"
-    elif ram_pct >= RAM_HIGH_WATER_PCT:
+    elif ram_pct >= RAM_HIGH_WATER_PCT:     # 80 %
         ram_p = "HIGH"
-    elif ram_pct >= 75:
+    elif ram_pct >= 70:
         ram_p = "MODERATE"
     else:
         ram_p = "OK"
@@ -207,6 +220,19 @@ def get_resource_snapshot() -> ResourceSnapshot:
         throttle_reason = (
             f"RAM {ram_pct:.0f}% > {RAM_HIGH_WATER_PCT:.0f}% high-water — "
             f"only {vm.available/1024**3:.1f} GB free"
+        )
+    elif cpu >= CPU_HIGH_WATER_PCT:
+        safe = False
+        throttle_reason = (
+            f"CPU {cpu:.0f}% >= {CPU_HIGH_WATER_PCT:.0f}% high-water — "
+            f"system is saturated; letting it breathe before new GPU work"
+        )
+    elif sw.total > 0 and (sw.used / sw.total * 100.0) >= SWAP_HIGH_WATER_PCT:
+        safe = False
+        swap_pct_now = sw.used / sw.total * 100.0
+        throttle_reason = (
+            f"Swap {swap_pct_now:.0f}% >= {SWAP_HIGH_WATER_PCT:.0f}% — "
+            f"pagefile pressure; avoiding additional GPU load"
         )
 
     return ResourceSnapshot(
@@ -322,6 +348,96 @@ def evict_idle_ollama_models(verbose: bool = True) -> int:
                 print(f"[RESOURCE GOV] Evict {m.name} failed: {e}", file=sys.stderr)
 
     return evicted
+
+
+def enforce_resource_targets(
+    verbose: bool = True,
+    auto_evict: bool = True,
+) -> dict:
+    """
+    Enforce the 80 % utilisation target across all resources.
+
+    Called by P0 TRUE_SEEING every tick (every 30 s) to keep the system
+    inside the target envelope:
+      - VRAM > RESOURCE_TARGET_PCT  → auto-evict idle Ollama models
+      - RAM  > RAM_HIGH_WATER_PCT   → emit warning + NPU-prefer signal
+      - CPU  > CPU_HIGH_WATER_PCT   → emit warning
+
+    Returns a dict with:
+      actions_taken:       list of strings describing what was done
+      npu_preferred:       bool — True when GPU pressure is high
+      evicted_models:      int  — number of Ollama models evicted this call
+      pressures:           dict of resource → pressure label
+    """
+    snap = get_resource_snapshot()
+    actions: list[str] = []
+    evicted = 0
+
+    # ── VRAM enforcement ────────────────────────────────────────────────────
+    if snap.vram_pct_of_budget >= RESOURCE_TARGET_PCT and auto_evict:
+        if snap.ollama_models_loaded:
+            evicted = evict_idle_ollama_models(verbose=verbose)
+            if evicted:
+                actions.append(
+                    f"EVICT: {evicted} Ollama model(s) freed "
+                    f"({snap.vram_used_gb:.1f} GB VRAM was at {snap.vram_pct_of_budget:.0f}%)"
+                )
+        else:
+            actions.append(
+                f"VRAM_WARN: {snap.vram_pct_of_budget:.0f}% of budget "
+                f"but no idle models to evict"
+            )
+
+    # ── RAM enforcement ─────────────────────────────────────────────────────
+    if snap.ram_used_pct >= RAM_HIGH_WATER_PCT:
+        actions.append(
+            f"RAM_WARN: {snap.ram_used_pct:.0f}% used "
+            f"({snap.ram_available_gb:.1f} GB free) — prefer NPU"
+        )
+
+    # ── CPU enforcement ─────────────────────────────────────────────────────
+    if snap.cpu_pct >= CPU_HIGH_WATER_PCT:
+        actions.append(
+            f"CPU_WARN: {snap.cpu_pct:.0f}% — stalling new GPU inferences"
+        )
+
+    # ── Swap enforcement ────────────────────────────────────────────────────
+    if snap.swap_used_pct >= SWAP_HIGH_WATER_PCT:
+        actions.append(
+            f"SWAP_WARN: {snap.swap_used_pct:.0f}% pagefile used "
+            f"({snap.swap_used_gb:.1f}/{snap.swap_total_gb:.1f} GB)"
+        )
+
+    if verbose and actions:
+        for a in actions:
+            print(f"[RESOURCE GOV] enforce: {a}", file=sys.stderr)
+
+    # NPU is preferred whenever GPU or RAM is under pressure
+    npu_preferred = (
+        snap.vram_pct_of_budget >= RESOURCE_TARGET_PCT
+        or snap.ram_used_pct >= RAM_HIGH_WATER_PCT
+        or snap.cpu_pct >= CPU_HIGH_WATER_PCT
+    )
+
+    return {
+        "timestamp": snap.timestamp,
+        "actions_taken": actions,
+        "npu_preferred": npu_preferred,
+        "evicted_models": evicted,
+        "pressures": {
+            "vram": snap.gpu_pressure,
+            "ram":  snap.ram_pressure,
+            "cpu":  "HIGH" if snap.cpu_pct >= CPU_HIGH_WATER_PCT else "OK",
+            "swap": "HIGH" if snap.swap_used_pct >= SWAP_HIGH_WATER_PCT else "OK",
+        },
+        "metrics": {
+            "vram_pct":  snap.vram_pct_of_budget,
+            "ram_pct":   snap.ram_used_pct,
+            "cpu_pct":   snap.cpu_pct,
+            "swap_pct":  snap.swap_used_pct,
+        },
+        "target_pct": RESOURCE_TARGET_PCT,
+    }
 
 
 def evict_and_wait(
@@ -584,8 +700,313 @@ def _print_status():
     if swap["recommendations"]:
         for rec in swap["recommendations"]:
             print(f"    ⚠  {rec}")
-    print(f"\n  CPU : {snap.cpu_pct:.0f}%  ({snap.cpu_cores} logical cores)")
+    if snap.swap_total_gb > 0 and snap.swap_used_pct >= SWAP_HIGH_WATER_PCT:
+        print(f"    ⛔ SWAP HIGH WATER ({snap.swap_used_pct:.0f}% > {SWAP_HIGH_WATER_PCT:.0f}%) — GPU new work paused")
+    cpu_warn = "⛔ THROTTLE" if snap.cpu_pct >= CPU_HIGH_WATER_PCT else ("⚠ HIGH" if snap.cpu_pct >= 80 else "OK")
+    print(f"\n  CPU : {snap.cpu_pct:.0f}%  ({snap.cpu_cores} logical cores)  [{cpu_warn}]")
+    if snap.cpu_pct >= CPU_HIGH_WATER_PCT:
+        print(f"    ⛔ CPU > {CPU_HIGH_WATER_PCT:.0f}% — new GPU inference paused until CPU cools")
     print()
+
+
+# ─── GovernorConfig + ResourceGovernor Class ─────────────────────────────────
+#
+# The class-based API that the ATDD specs (features/resource_governor.feature)
+# require.  Built on top of the functional helpers above.
+
+
+@dataclass
+class GovernorConfig:
+    """Configuration for ResourceGovernor class.  Build via from_env()."""
+
+    vram_target_pct: float = 80.0
+    ram_target_pct: float = 80.0
+    cpu_target_pct: float = 80.0
+    npu_min_rate_pct: float = 30.0
+    evict_idle_after_s: float = 300.0
+    vram_budget_gb: float = VRAM_BUDGET_GB  # from module-level env read
+    db_path: Optional[Path] = field(default=None)
+
+    @classmethod
+    def from_env(cls, db_path: Optional[Path] = None) -> "GovernorConfig":
+        """Read governor parameters from environment, falling back to defaults."""
+        try:
+            from dotenv import load_dotenv
+            for parent in [Path.cwd(), Path(__file__).resolve().parent]:
+                for c in [parent, *parent.parents]:
+                    ep = c / ".env"
+                    if ep.exists() and (c / "AGENTS.md").exists():
+                        load_dotenv(ep, override=False)
+                        break
+        except ImportError:
+            pass
+        return cls(
+            vram_target_pct=float(os.getenv("HFO_VRAM_TARGET_PCT", "80")),
+            ram_target_pct=float(os.getenv("HFO_RAM_TARGET_PCT", "80")),
+            cpu_target_pct=float(os.getenv("HFO_CPU_TARGET_PCT", "80")),
+            npu_min_rate_pct=float(os.getenv("HFO_NPU_MIN_RATE_PCT", "30")),
+            evict_idle_after_s=float(os.getenv("HFO_EVICT_IDLE_AFTER_S", "300")),
+            vram_budget_gb=float(os.getenv("HFO_VRAM_BUDGET_GB", "10.0")),
+            db_path=db_path,
+        )
+
+    @property
+    def vram_target_gb(self) -> float:
+        return self.vram_budget_gb * self.vram_target_pct / 100.0
+
+    @property
+    def ram_block_pct(self) -> float:
+        """Hard block threshold — 12 pp above the soft target."""
+        return min(self.ram_target_pct + 12.0, 95.0)
+
+
+class ResourceGovernor:
+    """
+    Class-based governor that enforces resource ceilings on the daemon fleet.
+
+    Usage:
+        gov = ResourceGovernor(GovernorConfig.from_env())
+        gate = gov.gate()        # "GO" or "HOLD"
+        gov.enforce()            # evict, signal, write stigmergy
+        reaped = gov.reap_ghost_processes()   # kill excess hfo_*.py procs
+    """
+
+    _RAM_HARD_BLOCK_PCT: float = 88.0   # above this → ResourcePressureError
+
+    def __init__(
+        self,
+        config: GovernorConfig,
+        _mock_ollama_evict: bool = False,   # test injection
+    ) -> None:
+        self.config = config
+        self._mock_ollama_evict = _mock_ollama_evict
+        self.enforce_call_count: int = 0
+        self._lock = threading.Lock()
+
+    # ── Primary API ───────────────────────────────────────────────────────────
+
+    def gate(self, snapshot: Optional["ResourceSnapshot"] = None) -> str:
+        """
+        Evaluate current resource pressure.
+
+        Returns "GO" when it is safe to start new GPU/LLM work,
+        "HOLD" when resources are over target and inference should pause.
+        """
+        snap = snapshot or get_resource_snapshot()
+
+        vram_pct = snap.vram_pct_of_budget
+        ram_pct = snap.ram_used_pct
+
+        if (vram_pct >= self.config.vram_target_pct
+                or ram_pct >= self.config.ram_target_pct):
+            return "HOLD"
+        return "GO"
+
+    def enforce(self, snapshot: Optional["ResourceSnapshot"] = None) -> None:
+        """
+        Enforce resource ceilings.
+
+        1. Evict Ollama models above VRAM target
+        2. Emit NPU under-utilisation signal if applicable
+        3. Write hfo.gen89.governor.cycle stigmergy event
+        """
+        snap = snapshot or get_resource_snapshot()
+
+        with self._lock:
+            self.enforce_call_count += 1
+
+            vram_pct = snap.vram_pct_of_budget
+            evicted_models: list[str] = []
+
+            # Evict if above target
+            if vram_pct >= self.config.vram_target_pct:
+                if self._mock_ollama_evict:
+                    # In tests: treat all loaded models as evicted
+                    evicted_models = [m.name for m in snap.ollama_models_loaded]
+                else:
+                    for model in snap.ollama_models_loaded:
+                        try:
+                            self._evict_model(model.name)
+                            evicted_models.append(model.name)
+                        except Exception:
+                            pass
+
+            cycle_data: dict = {
+                "enforcement_cycle": self.enforce_call_count,
+                "vram_pct": vram_pct,
+                "ram_pct": snap.ram_used_pct,
+                "cpu_pct": snap.cpu_pct,
+                "evicted": evicted_models,
+                "gate": "HOLD" if self.gate(snap) == "HOLD" else "GO",
+            }
+            self._write_stigmergy("hfo.gen89.governor.cycle", cycle_data)
+
+            if evicted_models:
+                self._write_stigmergy("hfo.gen89.governor.evicted", {
+                    "models": evicted_models,
+                    "vram_pct_at_eviction": vram_pct,
+                    "cycle": self.enforce_call_count,
+                })
+
+    def wait_for_gpu_headroom(
+        self,
+        snapshot: Optional["ResourceSnapshot"] = None,
+        timeout_s: float = 120.0,
+        poll_s: float = 3.0,
+    ) -> bool:
+        """
+        Block until VRAM < target or RAM < hard block.
+        Raises ResourcePressureError if RAM > ram_block_pct (cannot recover by waiting).
+        Returns True when headroom is available.
+        """
+        # Lazy import to avoid circular; the exception lives in this module too.
+        deadline = time.time() + timeout_s
+        while True:
+            snap = snapshot or get_resource_snapshot()
+            # Hard RAM block — can't recover by waiting
+            if snap.ram_used_pct >= self.config.ram_block_pct:
+                raise ResourcePressureError(
+                    f"RAM at {snap.ram_used_pct:.1f}% — above hard block "
+                    f"{self.config.ram_block_pct:.1f}%"
+                )
+            # VRAM clear
+            if snap.vram_pct_of_budget < self.config.vram_target_pct:
+                return True
+            if time.time() >= deadline:
+                return False
+            # snapshot was injected (test mode) — don't loop forever
+            if snapshot is not None:
+                return False
+            time.sleep(poll_s)
+
+    def reap_ghost_processes(
+        self,
+        mock_process_list: Optional[list] = None,
+        fleet_size: int = 8,
+    ) -> list[int]:
+        """
+        Kill hfo_*.py processes in excess of fleet_size.
+
+        Excludes this process, fleet managers, and watchdog scripts.
+        Returns list of PIDs that were killed.
+
+        Args:
+            mock_process_list: Inject a list of fake process dicts for testing.
+                Each dict: {"pid": int, "name": str, "cmdline": list[str]}
+            fleet_size: How many hfo daemon processes are allowed.
+        """
+        EXCLUDED_PATTERNS = (
+            "hfo_resource_governor",
+            "hfo_fleet_manager",
+            "hfo_watchdog",
+            "hfo_octree_daemon",   # the orchestrator itself
+            "hfo_pointers",
+        )
+
+        my_pid = os.getpid()
+        hfo_procs: list[dict] = []
+
+        if mock_process_list is not None:
+            candidates = mock_process_list
+        else:
+            try:
+                candidates = [
+                    {
+                        "pid": p.pid,
+                        "name": p.name(),
+                        "cmdline": p.cmdline(),
+                    }
+                    for p in psutil.process_iter(["pid", "name", "cmdline"])
+                    if p.pid != my_pid
+                ]
+            except Exception:
+                return []
+
+        for proc in candidates:
+            cmdline = " ".join(proc.get("cmdline", []))
+            if not ("hfo_" in cmdline and ".py" in cmdline):
+                continue
+            # Skip excluded scripts
+            if any(pat in cmdline for pat in EXCLUDED_PATTERNS):
+                continue
+            hfo_procs.append(proc)
+
+        reaped: list[int] = []
+        excess = hfo_procs[fleet_size:]    # keep first fleet_size, kill the rest
+        for proc in excess:
+            pid = proc["pid"]
+            if mock_process_list is not None:
+                # In test mode — don't actually kill anything
+                reaped.append(pid)
+                self._write_stigmergy("hfo.gen89.governor.ghost_reaped", {
+                    "pid": pid, "cmdline": " ".join(proc.get("cmdline", [])),
+                    "mode": "test",
+                })
+            else:
+                try:
+                    import psutil as _psutil
+                    _psutil.Process(pid).terminate()
+                    reaped.append(pid)
+                    self._write_stigmergy("hfo.gen89.governor.ghost_reaped", {
+                        "pid": pid, "cmdline": " ".join(proc.get("cmdline", [])),
+                        "mode": "live",
+                    })
+                except Exception:
+                    pass
+
+        return reaped
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _evict_model(self, model_name: str) -> None:
+        """Call Ollama keep_alive=0 to unload a model from VRAM."""
+        url = f"{OLLAMA_BASE}/api/generate"
+        payload = json.dumps({
+            "model": model_name,
+            "keep_alive": 0,
+            "prompt": "",
+        }).encode()
+        req = urllib.request.Request(
+            url, data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+        except Exception:
+            pass  # Ollama may return 404 if model already unloaded — fine
+
+    def _write_stigmergy(self, event_type: str, data: dict) -> None:
+        """Write a CloudEvent to stigmergy_events (optional SSOT)."""
+        db_path = self.config.db_path
+        if not db_path or not Path(db_path).exists():
+            return
+        import hashlib
+        ts = datetime.now(timezone.utc).isoformat()
+        data_json = json.dumps(data, default=str)
+        content_hash = hashlib.sha256(
+            f"{event_type}:{ts}:{data_json}".encode()
+        ).hexdigest()
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(
+                """INSERT OR IGNORE INTO stigmergy_events
+                   (event_type, timestamp, subject, data_json, content_hash)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (event_type, ts, "governor", data_json, content_hash),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+
+# Re-export ResourcePressureError so callers can import from one place.
+try:
+    from hfo_llm_router import ResourcePressureError  # type: ignore
+except ImportError:
+    class ResourcePressureError(Exception):  # type: ignore[no-redef]
+        """RAM or VRAM pressure prevents inference."""
 
 
 if __name__ == "__main__":

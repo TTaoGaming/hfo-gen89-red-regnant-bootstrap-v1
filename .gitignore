@@ -37,6 +37,8 @@ desktop.ini
 
 # ── Root scratch scripts (operator one-offs, never commit) ───
 /_*.py
+/_*.ps1
+/_*.txt
 
 # ── Root state/output files ─────────────────────────────────
 /*.txt
@@ -57,7 +59,21 @@ artifacts/tmp/
 temp/
 fleet_monitor_run*.log
 
-# ── SQLite WAL/SHM (DB itself IS committed) ─────────────────
+# ── Generated concat/compilation artifacts (too large for git) ──
+*_CONCAT_*.md
+*_MEGA_COMPILATION*.md
+
+# ── Omega v13 build artifacts ───────────────────────────────
+test-results/
+reports/
+*.tsbuildinfo
+
+# ── SQLite WAL/SHM (DB itself IS committed via LFS) ─────────
 *.sqlite-wal
 *.sqlite-shm
 *.sqlite-journal
+
+# Session scratch scripts (housekeeping)
+_scratch/
+# ── VSCode extension packages (generated artifacts) ──────────
+*.vsix

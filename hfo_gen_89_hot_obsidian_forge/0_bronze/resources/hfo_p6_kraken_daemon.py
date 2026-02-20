@@ -147,6 +147,7 @@ OLLAMA_BASE = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 P6_MODEL = os.environ.get("P6_OLLAMA_MODEL", "lfm2.5-thinking:1.2b")  # 0.7 GB VRAM, 47 tok/s — tiny-first to save GPU headroom
 P6_SOURCE = f"hfo_p6_kraken_daemon_gen{GEN}"
 STATE_FILE = HFO_ROOT / ".hfo_p6_kraken_state.json"
+_NPU_STATE_PATH = HFO_ROOT / ".hfo_npu_state.json"  # read by P0 TRUE_SEEING
 
 # ═══════════════════════════════════════════════════════════════
 # KRAKEN KEEPER IDENTITY
@@ -512,6 +513,19 @@ def npu_llm_generate(prompt: str, max_new_tokens: int = 180) -> Optional[str]:
         if not _npu_output_valid(clean):
             print(f"[NPU LLM] output failed quality gate — falling back")
             return None
+        # ── Stamp NPU state file so P0 TRUE_SEEING knows NPU is active ───────
+        try:
+            _NPU_STATE_PATH.write_text(
+                json.dumps({
+                    "active": True,
+                    "last_inference_ts": datetime.now(timezone.utc).isoformat(),
+                    "model": os.environ.get("P6_NPU_LLM_MODEL", "unknown"),
+                    "tokens_generated": max_new_tokens,
+                }),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
         return clean
     except Exception as e:
         print(f"[NPU LLM] generate error: {e}")
