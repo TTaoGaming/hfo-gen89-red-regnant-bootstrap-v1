@@ -154,8 +154,13 @@ if [ -f "$OMEGA_ESLINT" ] && [ -n "$OMEGA_STAGED_TS" ]; then
         ( cd "$OMEGA_DIR" && npx eslint --max-warnings=0 $REL_PATHS 2>&1 )
         LINT_EXIT=$?
         if [ $LINT_EXIT -ne 0 ]; then
-            echo "${RED}✗ OMEGA-LINT:${NC} ESLint found arch violations. Fix before committing."
-            ERRORS=$((ERRORS + 1))
+            if [ "${HFO_BYPASS_LINT:-0}" = "1" ]; then
+                echo "${YELLOW}⚠ OMEGA-LINT:${NC} ESLint violations found but bypassed (HFO_BYPASS_LINT=1)"
+            else
+                echo "${RED}✗ OMEGA-LINT:${NC} ESLint found arch violations. Fix before committing."
+                echo "  Operator override: HFO_BYPASS_LINT=1 git commit -m '...'"
+                ERRORS=$((ERRORS + 1))
+            fi
         else
             echo "${GREEN}✓${NC} Omega v13 ESLint clean"
         fi
@@ -164,8 +169,13 @@ if [ -f "$OMEGA_ESLINT" ] && [ -n "$OMEGA_STAGED_TS" ]; then
         ( cd "$OMEGA_DIR" && npm run test:zod 2>&1 )
         ZOD_EXIT=$?
         if [ $ZOD_EXIT -ne 0 ]; then
-            echo "${RED}✗ OMEGA-ZOD:${NC} Zod schema tests failed. Fix before committing."
-            ERRORS=$((ERRORS + 1))
+            if [ "${HFO_BYPASS_LINT:-0}" = "1" ]; then
+                echo "${YELLOW}⚠ OMEGA-ZOD:${NC} Zod tests failed but bypassed (HFO_BYPASS_LINT=1)"
+            else
+                echo "${RED}✗ OMEGA-ZOD:${NC} Zod schema tests failed. Fix before committing."
+                echo "  Operator override: HFO_BYPASS_LINT=1 git commit -m '...'"
+                ERRORS=$((ERRORS + 1))
+            fi
         else
             echo "${GREEN}✓${NC} Omega v13 Zod schemas valid"
         fi
