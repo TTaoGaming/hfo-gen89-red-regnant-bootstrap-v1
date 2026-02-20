@@ -63,9 +63,9 @@ The goal: clean gestures consistently exceed `conf_high`. Transition noise stays
 
 | Environment | `conf_high` | `conf_low` |
 |------------|-------------|------------|
-| Good lighting, close camera (~60cm) | 0.60 | 0.40 |
-| Mixed/side lighting, medium (~90cm) | 0.55 | 0.35 |
-| Poor lighting or far camera (~150cm+) | 0.45 | 0.28 |
+| Good lighting, close camera (~60cm) | 0.65 | 0.50 |
+| Mixed/side lighting, medium (~90cm) | 0.58 | 0.42 |
+| Poor lighting or far camera (~150cm+) | 0.48 | 0.32 |
 
 **Verify:** After setting, run the debug overlay. The `current_confidence` in the overlay should stay comfortably above `conf_high` during clean held gestures and drop into or below the band during transitions. If clean gestures hover in the band, lower `conf_high` by 0.05.
 
@@ -73,33 +73,31 @@ The goal: clean gestures consistently exceed `conf_high`. Transition noise stays
 
 ## Step 3: Tune Dwell Limits (Bucket Overflow Thresholds)
 
-Dwell limits control how many frames of sustained gesture evidence are required before a transition fires. At 30fps, 1 frame ≈ 33ms.
+Dwell limits control how many **milliseconds** of sustained gesture evidence are required before a transition fires. All limits are framerate-independent — the FSM accumulates elapsed ms per frame.
 
-| Parameter | Too High → | Too Low → | Recommended Range |
-|-----------|-----------|-----------|-------------------|
-| `limits.READY` | System feels unresponsive to arming | Accidental arming from open-palm transit | 4–7 frames |
-| `limits.COMMIT_POINTER` | Click registration lags noticeably | Accidental clicks from brief flicks | 2–5 frames |
-| `limits.IDLE` | Disarm feels sticky | Accidental disarming during draw | 3–6 frames |
+| Parameter | Too High → | Too Low → | Default | Recommended Range |
+|-----------|-----------|-----------|---------|-------------------|
+| `dwell_limit_ready_ms` | System feels unresponsive to arming | Accidental arming from open-palm transit | 100ms | 80–200ms |
+| `dwell_limit_commit_ms` | Click registration lags noticeably | Accidental clicks from brief flicks | 100ms | 60–150ms |
+| `coast_timeout_ms` | Hand loss keeps cursor pinching (ghost-draw) | Jittery hand breaks draw on momentary occlusion | 500ms | 300–800ms |
 
 **User population adjustments:**
 
-- **Young children (4–8):** Increase `limits.COMMIT_POINTER` to 5–6. They jab and flick their index finger; they rarely sustain the pointing gesture without intent.
-- **Adults:** Defaults (5/3/4) work well.
-- **Users with tremor:** Increase `limits.READY` and `limits.COMMIT_POINTER` to 7/6. Their gestures drift but intent is sustained.
+- **Young children (4–8):** Increase `dwell_limit_commit_ms` to 180–220ms. They jab and flick their index finger; they rarely sustain the pointing gesture without intent.
+- **Adults:** Defaults (100ms/100ms) work well.
+- **Users with tremor:** Increase `dwell_limit_ready_ms` and `dwell_limit_commit_ms` to 180–250ms. Their gestures drift but intent is sustained.
 
 ---
 
 ## Step 4: Tune Coast Timeout
 
-`coast_timeout_limit` = number of consecutive zero/low-confidence frames before the FSM resets to IDLE.
-
-At 30fps, the default 15 frames = ~500ms.
+`coast_timeout_ms` = milliseconds of consecutive zero/low-confidence input before the FSM resets to IDLE. Default: 500ms.
 
 **If mid-draw breaks are occurring (the line stops when the user briefly occludes their hand):**
-- Increase `coast_timeout_limit` to 20–30 (667ms–1s).
+- Increase `coast_timeout_ms` to 600–1000ms.
 
 **If ghost-cursor lingers too long after user moves out of frame:**
-- Decrease `coast_timeout_limit` to 8–10 (267–333ms).
+- Decrease `coast_timeout_ms` to 250–350ms.
 
 **⚠ Warning: coast risk under COMMIT_COAST.** See FSM-V1 in the Reference doc. If you increase coast timeout significantly, ensure your pointer-event emitter guards against teleport events on recovery (velocity gate).
 
@@ -112,11 +110,11 @@ This is the most environment-specific tuning. It affects the raw `pointerUpScore
 The `pointerLock` formula is:
 
 ```
-thumbToMiddleDist = dist3(landmarks[4], landmarks[10]) / palmWidth
+thumbToMiddleDist = dist3(landmarks[4], landmarks[12]) / palmWidth
 pointerLock = clamp01((1.5 - thumbToMiddleDist) / 1.0)
 ```
 
-The constant `1.5` is the "activation distance" — when thumb tip is within 1.5 palm-widths of the middle PIP joint, the lock score starts building.
+The constant `1.5` is the "activation distance" — when thumb tip (lm[4]) is within 1.5 palm-widths of the middle finger **fingertip** (lm[12]), the lock score starts building.
 
 **To diagnose:** Ask your user to make a clear pointing gesture and read the debug overlay's `maxScore` for `pointer_up`. If it is consistently below `conf_high`:
 

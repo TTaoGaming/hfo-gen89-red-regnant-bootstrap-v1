@@ -74,9 +74,9 @@ Prevents high-frequency threshold bouncing from destabilising bucket counts.
 
 | Parameter | Default | Semantics |
 |-----------|---------|-----------|
-| `conf_high` | `0.60` | Minimum structural confidence required to process gesture transitions |
-| `conf_low` | `0.40` | Below this, all buckets leak and coast is entered |
-| Gap (conf_low..conf_high) | `0.20` | Hysteresis band — in-band frames leak buckets but do not accumulate |
+| `conf_high` | `0.64` | Minimum structural confidence required to process gesture transitions |
+| `conf_low` | `0.50` | Below this, all buckets leak and coast is entered |
+| Gap (conf_low..conf_high) | `0.14` | Hysteresis band — in-band frames leak buckets but do not accumulate |
 
 **Behaviour:** Once you enter the hysteresis band from above, the system does not immediately coast — it leaks buckets slowly. You must either drop below `conf_low` (coast) or recover above `conf_high` (resume). This prevents short-lived drops from disrupting accumulated intent.
 
@@ -90,11 +90,13 @@ Each state defines an explicit allow-list of `(target_state, required_gesture)` 
 
 Each legal exit from a state has its own bucket. Buckets are never shared.
 
-| Transition Target | Dwell Limit (frames) | At 30fps (≈) |
-|-------------------|---------------------|--------------|
-| `READY` | 5 | ~167 ms |
-| `COMMIT_POINTER` | 3 | ~100 ms |
-| `IDLE` | 4 | ~133 ms |
+| Transition Target | Dwell Limit (ms) | Notes |
+|-------------------|-----------------|-------|
+| `READY` | 100 ms | `dwell_limit_ready_ms` — framerate-independent |
+| `COMMIT_POINTER` | 100 ms | `dwell_limit_commit_ms` — framerate-independent |
+| `IDLE` (coast timeout) | 500 ms | `coast_timeout_ms` — total-loss window before hard reset |
+
+**Note:** All dwell limits are millisecond-based. The FSM accumulates `delta_ms` each frame and triggers at overflow. This is framerate-independent; behaviour is identical at 30fps and 60fps.
 
 **Reset on transition:** When a bucket overflows and triggers a transition, ALL buckets are wiped to zero. This prevents accidental rapid-fire transitions immediately after a state change.
 
@@ -145,12 +147,12 @@ On frame where `confidence >= conf_high` and current state is a coast state:
 
 | Parameter | Default | Layer | Description |
 |-----------|---------|-------|-------------|
-| `conf_high` | `0.60` | L1 Schmitt | Enter-high threshold |
-| `conf_low` | `0.40` | L1 Schmitt | Exit-low threshold |
-| `limits.READY` | `5` | L3 Bucket | Frames to arm system |
-| `limits.COMMIT_POINTER` | `3` | L3 Bucket | Frames to fire click |
-| `limits.IDLE` | `4` | L3 Bucket | Frames to disarm |
-| `coast_timeout_limit` | `15` | Coast | Frames until total-loss → IDLE |
+| `conf_high` | `0.64` | L1 Schmitt | Enter-high threshold |
+| `conf_low` | `0.50` | L1 Schmitt | Exit-low threshold |
+| `dwell_limit_ready_ms` | `100` | L3 Bucket | Milliseconds to arm system |
+| `dwell_limit_commit_ms` | `100` | L3 Bucket | Milliseconds to fire click / release |
+| `coast_timeout_ms` | `500` | Coast | Milliseconds until total-loss → IDLE |
+| `pointerUpScore` weights | `index:0.4, middle:0.1, ring:0.1, pinky:0.1, thumbMiddle:0.3` | L2 Scoring | Initial heuristic weights — not empirically validated (provenance: `initial_heuristic_2026-02-20`) |
 
 All parameters are tunable. See [HOWTO_TUNE_GESTURE_FSM_THRESHOLDS.md](HOWTO_TUNE_GESTURE_FSM_THRESHOLDS.md) for the tuning procedure.
 
