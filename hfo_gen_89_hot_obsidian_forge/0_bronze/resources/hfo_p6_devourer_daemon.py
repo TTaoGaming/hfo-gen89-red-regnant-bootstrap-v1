@@ -85,8 +85,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-# ═══════════════════════════════════════════════════════════════
-# § 0  PATH RESOLUTION VIA PAL
+# Resource governor — hard 80% GPU ceiling
+try:
+    _rg_dir = str(Path(__file__).resolve().parent)
+    if _rg_dir not in sys.path:
+        sys.path.insert(0, _rg_dir)
+    from hfo_resource_governor import (
+        wait_for_gpu_headroom as _wait_gpu_headroom,
+        start_background_monitor as _start_rg_monitor,
+    )
+    _RESOURCE_GOVERNOR_AVAILABLE = True
+except ImportError:
+    _RESOURCE_GOVERNOR_AVAILABLE = False
+    def _wait_gpu_headroom(*a, **kw): return True
+    def _start_rg_monitor(*a, **kw): pass
 # ═══════════════════════════════════════════════════════════════
 
 def _find_root() -> Path:
@@ -274,13 +286,21 @@ def ollama_generate(
     num_predict: int = 1024,
 ) -> str:
     """Call Ollama generate API. Returns response text or empty on error.
-    Automatically strips <think> tags from reasoning models."""
+    Automatically strips <think> tags from reasoning models.
+    Resource governor gate: waits for VRAM headroom before each call.
+    keep_alive=0s evicts model immediately after call.
+    """
+    if _RESOURCE_GOVERNOR_AVAILABLE:
+        ok = _wait_gpu_headroom(caller="devourer_ollama", verbose=False)
+        if not ok:
+            return ""
     import httpx
     url = f"{OLLAMA_BASE}/api/generate"
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": "0s",
         "options": {"num_predict": num_predict, "temperature": temperature},
     }
     if system:
@@ -303,19 +323,31 @@ def ollama_generate_with_metrics(
     timeout: float = 180,
     temperature: float = 0.3,
     num_predict: int = 1024,
+    response_format: str = "",
 ) -> tuple[str, dict]:
     """Call Ollama generate API. Returns (response_text, metrics_dict).
-    Metrics include: eval_count, eval_duration, prompt_eval_count, total_duration."""
+    Metrics include: eval_count, eval_duration, prompt_eval_count, total_duration.
+    Pass response_format='json' to enforce structured JSON output from the model.
+    Resource governor gate: waits for VRAM headroom before each call.
+    keep_alive=0s evicts model immediately after call.
+    """
+    if _RESOURCE_GOVERNOR_AVAILABLE:
+        ok = _wait_gpu_headroom(caller="devourer_ollama_metrics", verbose=False)
+        if not ok:
+            return "", {}
     import httpx
     url = f"{OLLAMA_BASE}/api/generate"
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": "0s",
         "options": {"num_predict": num_predict, "temperature": temperature},
     }
     if system:
         payload["system"] = system
+    if response_format:
+        payload["format"] = response_format
     try:
         with httpx.Client(timeout=timeout) as c:
             resp = c.post(url, json=payload)
@@ -680,17 +712,16 @@ Respond with ONLY a JSON object:
 
     model = compute_aware_model_select("heavy")
     resp, metrics = ollama_generate_with_metrics(
-        prompt, system=SYSTEM_PROMPT, model=model, num_predict=1024
+        prompt, system=SYSTEM_PROMPT, model=model, num_predict=1024,
+        response_format="json",
     )
     parsed = _extract_json(resp)
     if parsed and parsed.get("L1_BLUF"):
         # Also set the flat "bluf" key for backward compat with D5
         parsed["bluf"] = parsed["L1_BLUF"]
-        print(f"[D1] Parsed JSON: L1={len(parsed.get('L1_BLUF',''))}, L2={len(parsed.get('L2_SECTIONS',[]))}, L3={len(parsed.get('L3_CONCEPTS',[]))}")
         return parsed, metrics
     # Fallback: treat entire response as a flat BLUF
     bluf_text = resp.strip() if resp else ""
-    print(f"[D1] Fallback: response_len={len(resp) if resp else 0}, parsed={parsed}, bluf_text_len={len(bluf_text)}")
     return {
         "bluf": bluf_text,
         "L1_BLUF": bluf_text,
