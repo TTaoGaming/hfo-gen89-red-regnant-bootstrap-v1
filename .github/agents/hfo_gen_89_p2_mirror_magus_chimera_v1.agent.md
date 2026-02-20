@@ -192,14 +192,15 @@ what dimensions to evolve, what constraints to enforce.
 | `plan` | — | string | CONSTRAIN phase — what will be created, what invariants apply |
 | `shared_data_refs` | P1 | csv string | Cross-references bridged from SSOT. P1 workflow: DISCOVER → EXTRACT → CONTRACT → BIND → VERIFY |
 | `navigation_intent` | P7 | string | Creation strategy / what demiplane physics are being designed. P7 workflow: MAP → LATTICE → PRUNE → SELECT → DISPATCH |
-| `meadows_level` | P7 | int 1-12 | Which Meadows leverage level this creation operates at |
+| `meadows_level` | P7 | int 1-13 | Which Meadows leverage level this creation operates at |
 | `meadows_justification` | P7 | string | Why this leverage level is the right intervention |
 | `sequential_plan` | P7 | csv string | Ordered creation steps for the Execute phase |
 
-#### Meadows 12 Leverage Levels (from SSOT Doc 317):
+#### Meadows 13 Leverage Levels (from SSOT Doc 317 & E-G89-L13-01):
 
 | Level | Name | HFO Mapping | When P2 Uses It |
 |-------|------|-------------|-----------------|
+| L13 | Conceptual Incarnation | HFO Pantheon / Octree | Pulling the divine into the finite system, structurally integrating the human |
 | L12 | Transcend paradigms | P1 BRIDGE alias table | Creating something that redefines the approach entirely |
 | L11 | Paradigm | Mission engineering | Shifting what "creation" means in this context |
 | L10 | Goal | Zero-cost interactive whiteboard | Changing what the creation is FOR |
@@ -215,7 +216,7 @@ what dimensions to evolve, what constraints to enforce.
 
 **Choose the HIGHEST applicable level.** The Demiurge creates REALITIES, not parameters.
 
-**If ANY field is empty or meadows_level not 1-12 → GATE_BLOCKED.**
+**If ANY field is empty or meadows_level not 1-13 → GATE_BLOCKED.**
 
 **You receive:** `react_token`, `chain_hash`, `gate_receipt`
 **You MUST pass:** `react_token` to prey8_execute
@@ -340,7 +341,7 @@ it for deployment. Your Galois partner owns this gate.
 │ Survey    │ OBSERVE+ASSIMILATE│ stigmergy_digest                   │
 ├───────────┼──────────────────┼──────────────────────────────────────┤
 │ REACT     │ P1+P7            │ shared_data_refs, navigation_intent,│
-│ Blueprint │ BRIDGE+NAVIGATE  │ meadows_level(1-12),                │
+│ Blueprint │ BRIDGE+NAVIGATE  │ meadows_level(1-13),                │
 │           │                  │ meadows_justification,              │
 │           │                  │ sequential_plan                     │
 ├───────────┼──────────────────┼──────────────────────────────────────┤
@@ -441,7 +442,7 @@ that discovers optimal agent configurations through structured genomes.
 | `adversarial_depth` | How deeply to probe weaknesses | 6 | `chaos_monkey` |
 | `reasoning_style` | Problem decomposition approach | 7 | `ralph_wiggums` |
 | `gate_philosophy` | PREY8 gate field treatment | 5 | `ceremonial` |
-| `meadows_strategy` | Leverage level selection (1-12) | 5 | `contrarian` |
+| `meadows_strategy` | Leverage level selection (1-13) | 5 | `contrarian` |
 | `sbe_style` | Given/When/Then specification style | 5 | `narrative` |
 | `trust_posture` | Default trust level for bronze data | 5 | `dgaf_chaos` |
 | `artifact_discipline` | Code output style | 5 | `spike_and_refine` |
