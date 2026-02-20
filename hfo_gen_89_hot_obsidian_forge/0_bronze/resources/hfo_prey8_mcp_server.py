@@ -696,8 +696,8 @@ def _validate_gate(gate_name: str, fields: dict, agent_id: str = "") -> Optional
             # For fail_closed_gate: must be explicitly True
             empty.append(field_name)
         elif isinstance(value, int) and field_name == "meadows_level":
-            if value < 1 or value > 12:
-                empty.append(f"{field_name}(must be 1-12, got {value})")
+            if value < 1 or value > 13:
+                empty.append(f"{field_name}(must be 1-13, got {value})")
         elif isinstance(value, int) and field_name == "mutation_confidence":
             if value < 0 or value > 100:
                 empty.append(f"{field_name}(must be 0-100, got {value})")
@@ -1002,16 +1002,16 @@ def prey8_react(
     - navigation_intent: Your strategic direction and C2 steering decision
       (P7 NAVIGATE workflow: MAP -> LATTICE -> PRUNE -> SELECT -> DISPATCH).
       Where are you steering the session?
-    - meadows_level: Which Meadows leverage level (1-12) this session operates at.
+    - meadows_level: Which Meadows leverage level (1-13) this session operates at.
       L1=Parameters, L2=Buffers, L3=Structure, L4=Delays, L5=Negative feedback,
       L6=Info flows, L7=Positive feedback, L8=Rules, L9=Self-org, L10=Goal,
-      L11=Paradigm, L12=Transcend paradigms.
+      L11=Paradigm, L12=Transcend paradigms, L13=Conceptual Incarnation.
     - meadows_justification: Why you chose this leverage level. What makes
       this the right level of intervention?
     - sequential_plan: Comma-separated ordered reasoning steps. The structured
       plan the agent will follow through Execute.
 
-    If ANY field is empty or meadows_level is not 1-12, you are GATE_BLOCKED.
+    If ANY field is empty or meadows_level is not 1-13, you are GATE_BLOCKED.
 
     Also validates:
     - perceive_nonce matches (tamper check)
@@ -1023,7 +1023,7 @@ def prey8_react(
         plan: Your high-level plan of action (what and why).
         shared_data_refs: Comma-separated P1 BRIDGE cross-references.
         navigation_intent: P7 NAVIGATE strategic direction.
-        meadows_level: Meadows leverage level 1-12.
+        meadows_level: Meadows leverage level 1-13.
         meadows_justification: Why this leverage level.
         sequential_plan: Comma-separated ordered reasoning steps.
 
@@ -1086,6 +1086,33 @@ def prey8_react(
     }, agent_id=agent_id)
     if gate_block:
         return gate_block
+
+    # ---- L8+ Structural Enforcement for Strategic Tasks ----
+    strategic_keywords = ["architecture", "paradigm", "system", "strategy", "governance", "hfo", "octree", "pantheon", "diataxis"]
+    combined_text = f"{navigation_intent} {plan} {analysis}".lower()
+    is_strategic = any(kw in combined_text for kw in strategic_keywords)
+    
+    if is_strategic and meadows_level < 8:
+        alert_data = {
+            "alert_type": "meadows_trap_regression",
+            "step": "REACT",
+            "agent_id": agent_id,
+            "meadows_level": meadows_level,
+            "session_id": session["session_id"],
+            "timestamp": _now_iso(),
+        }
+        alert_event = _cloudevent(
+            f"hfo.gen{GEN}.prey8.gate_blocked",
+            alert_data,
+            "prey-gate-blocked",
+            agent_id=agent_id,
+        )
+        _write_stigmergy(alert_event)
+        return {
+            "status": "ERROR",
+            "error": f"GATE_BLOCKED: Strategic probes require L8+ interventions. You submitted L{meadows_level}. "
+                     "You are trapped in the L1-L3 attractor basin. Elevate your thinking and try again.",
+        }
 
     # ---- Gate passed — proceed with react ----
 
