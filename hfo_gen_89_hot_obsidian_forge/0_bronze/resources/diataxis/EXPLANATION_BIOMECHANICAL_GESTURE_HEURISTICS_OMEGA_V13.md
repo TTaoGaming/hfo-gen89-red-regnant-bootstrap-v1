@@ -58,14 +58,14 @@ A structural heuristic measures the *evidence of this lock directly* rather than
 The key engineering insight is using **palm width** as the normalisation unit. Every person has a different hand size. Every user is at a different distance from the camera. Palm width (landmark[5]–landmark[17], index MCP to pinky MCP) scales with both, so dividing a distance measurement by palm width produces a scale-invariant structural ratio.
 
 ```
-pointerLock = clamp01((1.5 - distNorm(thumb_tip, middle_PIP)) / 1.0)
+pointerLock = clamp01((1.5 - distNorm(thumb_tip, middle_FINGERTIP)) / 1.0)
 ```
 
-This measures how close the thumb tip (landmark 4) is to the middle finger's PIP joint (landmark 10), normalised by palm width. A **high score** means the thumb is physically braced near the middle finger — the stabilising grip.
+This measures how close the thumb tip (landmark 4) is to the middle finger's **fingertip** (landmark 12), normalised by palm width. A **high score** means the thumb is physically braced near the middle finger — the stabilising grip.
 
 ### ⚠ P4 Critique: The Contact Point is Approximate
 
-The anatomically precise brace location is the lateral surface of the **index finger metacarpal** or the middle finger **metacarpal base** (landmark 9 vicinity), not the middle PIP joint (landmark 10). For typical pointing, landmark 10 will produce a functional but slightly underestimated pointerLock score.
+The anatomically precise brace location is the lateral surface of the **index finger metacarpal** or the middle finger **metacarpal base** (landmark 9 vicinity), not the middle fingertip (landmark 12). The current implementation uses landmark 12 (fingertip/DIP region), which is the *distal* end of the middle finger — slightly more distal than the optimal brace point but farther from the anatomically correct metacarpal base than landmark 10 (PIP) would be. For typical pointing, this produces a functional but slightly inaccurate pointerLock score.
 
 *This is acceptable as a first-order heuristic but should be noted in the tuning registry. Users with naturally wide thumb-to-index grip may need a higher threshold offset.*
 
@@ -79,7 +79,7 @@ Palm width (landmark 5 to 17) is the 2D projected distance, not the 3D true dist
 
 ## 4. Why RGB MediaPipe is Fundamentally Different from Leap/Vision Pro
 
-The analysis often references "what Apple and Ultraleap researched." This is technically misleading and matters for calibration of expectations:
+Brace-stability heuristics as a cursor-stabilisation strategy appear in the research traditions behind both Ultraleap and Apple Vision Pro hand tracking. RGB MediaPipe operates under significantly tighter constraints than either of those sensor stacks, and expectations must be calibrated accordingly:
 
 | System | Sensor | Depth Model | Environment |
 |--------|--------|-------------|-------------|

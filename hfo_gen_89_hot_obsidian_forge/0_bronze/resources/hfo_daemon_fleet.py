@@ -994,6 +994,33 @@ def show_deep_think_info():
 # Watchdog — 24/7 Auto-Restart
 # =====================================================================
 
+_WATCHDOG_PID_FILE = Path(__file__).parent / ".hfo_fleet_watchdog.pid"
+
+
+def _watchdog_singleton_check() -> bool:
+    """Return True if we are the one allowed watchdog instance.
+
+    Writes our PID to .hfo_fleet_watchdog.pid.  If the file already
+    exists AND the stored PID is still running, prints a warning and
+    returns False (caller should exit).  Stale / wrong-PID files are
+    silently overwritten.
+    """
+    if _WATCHDOG_PID_FILE.exists():
+        try:
+            stored_pid = int(_WATCHDOG_PID_FILE.read_text().strip())
+            if stored_pid != os.getpid() and _is_running(stored_pid):
+                print(
+                    f"[FLEET SINGLETON] Another watchdog already running "
+                    f"(PID {stored_pid}). Exiting to prevent duplication.",
+                    file=sys.stderr,
+                )
+                return False
+        except (ValueError, OSError):
+            pass  # corrupt file — overwrite
+    _WATCHDOG_PID_FILE.write_text(str(os.getpid()))
+    return True
+
+
 def watchdog(tiers: list[str], check_interval: int = 30):
     """Run a persistent watchdog that restarts dead daemons.
 
@@ -1003,6 +1030,10 @@ def watchdog(tiers: list[str], check_interval: int = 30):
 
     Run in foreground: python hfo_daemon_fleet.py --watchdog --free
     """
+    # ── SINGLETON GUARD — only one watchdog at a time ────────────────────────
+    if not _watchdog_singleton_check():
+        return
+
     print("=" * 72)
     print("  HFO Gen89 — Watchdog (24/7 Auto-Restart)")
     print(f"  Tiers: {', '.join(tiers)}")
@@ -1123,6 +1154,15 @@ def watchdog(tiers: list[str], check_interval: int = 30):
     except KeyboardInterrupt:
         print(f"\n  Watchdog stopped. Total restarts: {total_restarts}")
         print(f"  Daemons still running — use --stop or --nuke to kill.")
+    finally:
+        # Release singleton lock
+        try:
+            if _WATCHDOG_PID_FILE.exists():
+                stored = int(_WATCHDOG_PID_FILE.read_text().strip())
+                if stored == os.getpid():
+                    _WATCHDOG_PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 # =====================================================================
