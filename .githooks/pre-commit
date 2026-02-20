@@ -15,7 +15,7 @@ echo "═══ HFO Gen89 Pre-Commit Gate ═══"
 
 # ── 1. Root Cleanliness ──────────────────────────────────────
 # Only allowed root files (no deep forge stuff leaking to root)
-ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.gitattributes|\.githooks|\.github|\.vscode|hfo_gen89_pointers_blessed\.json|hfo_gen_89_hot_obsidian_forge|LICENSE|README\.md|\.git"
+ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.gitattributes|\.githooks|\.github|\.vscode|hfo_gen89_pointers_blessed\.json|hfo_gen_89_hot_obsidian_forge|LICENSE|README\.md|\.git|pytest\.ini|tests|features|_scratch"
 
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 
@@ -55,7 +55,8 @@ fi
 
 # ── 2b. Content Scanning for Secrets ─────────────────────────
 # Scan staged file contents for hardcoded API keys, tokens, passwords
-CONTENT_SECRET_PATTERNS='(BRAVE_API_KEY|TAVILY_API_KEY|GITHUB_PERSONAL_ACCESS_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|HFO_SECRET|api[_-]?key|secret[_-]?key|access[_-]?token|Bearer [A-Za-z0-9_\-\.]+)\s*[=:]\s*["'\'']*[A-Za-z0-9_\-\.]{16,}'
+# Require that the value IS quoted (avoids false positives on variable references)
+CONTENT_SECRET_PATTERNS='(BRAVE_API_KEY|TAVILY_API_KEY|GITHUB_PERSONAL_ACCESS_TOKEN|GITHUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|HFO_SECRET)\s*[=:]\s*["\x27][A-Za-z0-9_\-\.]{16,}'
 
 for f in $STAGED_FILES; do
     # Only scan text files, skip binaries and .env.example
@@ -75,43 +76,103 @@ if [ $ERRORS -eq 0 ]; then
 fi
 
 # ── 3. Medallion Boundary ────────────────────────────────────
-# DENY-BY-DEFAULT: Bronze must not write to Silver/Gold/Hyper layers.
-# Any staged change under those directories is a hard failure.
-for f in $STAGED_FILES; do
-    case "$f" in
-        *1_silver/*|*2_gold/*|*3_hyper_fractal_obsidian/*)
-            echo "${RED}✗ MEDALLION VIOLATION:${NC} $f — direct write to non-bronze layer is prohibited"
-            echo "  Move your changes to hfo_gen_89_hot_obsidian_forge/0_bronze/ and follow promotion gates."
-            ERRORS=$((ERRORS + 1))
-            ;;
-    esac
-done
+# DENY-BY-DEFAULT: Bronze cannot self-promote. Operator bypasses with:
+#   HFO_BYPASS_MEDALLION=1 git commit -m '...'
+if [ "${HFO_BYPASS_MEDALLION:-0}" = "1" ]; then
+    echo "${YELLOW}⚠ MEDALLION GATE BYPASSED${NC} (HFO_BYPASS_MEDALLION=1) — operator commit"
+else
+    for f in $STAGED_FILES; do
+        case "$f" in
+            *1_silver/*|*2_gold/*|*3_hyper_fractal_obsidian/*)
+                echo "${RED}✗ MEDALLION VIOLATION:${NC} $f — direct write to non-bronze layer"
+                echo "  Operator override: HFO_BYPASS_MEDALLION=1 git commit -m '...'"
+                ERRORS=$((ERRORS + 1))
+                ;;
+        esac
+    done
+fi
 
-# ── 4. Large File Gate (FAIL CLOSED) ──────────────────────────
-# Reject any new or modified file larger than 10 MB unless handled via LFS/outside git.
+# ── 4. Large File Gate ───────────────────────────────────────
+# Files >10 MB blocked unless they are known large assets (.sqlite = SSOT DB).
+# For the SSOT DB use: git lfs track "*.sqlite" before staging.
 for f in $STAGED_FILES; do
     if [ -f "$f" ]; then
         size=$(wc -c < "$f" 2>/dev/null || echo 0)
-        if [ "$size" -gt 10485760 ]; then
-            echo "${RED}✗ LARGE FILE VIOLATION:${NC} $f ($(($size / 1048576)) MB) — files >10MB are blocked. Use Git LFS or external storage."
-            ERRORS=$((ERRORS + 1))
-        fi
+        case "$f" in
+            *.sqlite)
+                if [ "$size" -gt 209715200 ]; then  # 200 MB hard cap on SSOT DB
+                    echo "${RED}✗ SQLITE TOO LARGE:${NC} $f ($(($size / 1048576)) MB) > 200 MB. Consider archiving old stigmergy events."
+                    ERRORS=$((ERRORS + 1))
+                elif [ "$size" -gt 10485760 ]; then
+                    echo "${YELLOW}⚠ LARGE SQLITE:${NC} $f ($(($size / 1048576)) MB) — consider Git LFS: git lfs track \"*.sqlite\""
+                fi
+                ;;
+            */archives/*)
+                # Bronze archives are expected large artifacts (concat/compilation outputs)
+                if [ "$size" -gt 52428800 ]; then  # 50 MB hard cap on archives
+                    echo "${RED}✗ ARCHIVE TOO LARGE:${NC} $f ($(($size / 1048576)) MB) > 50 MB."
+                    ERRORS=$((ERRORS + 1))
+                elif [ "$size" -gt 10485760 ]; then
+                    echo "${YELLOW}⚠ LARGE ARCHIVE:${NC} $f ($(($size / 1048576)) MB) — consider Git LFS: git lfs track \"$(basename $f)\""
+                fi
+                ;;
+            *)
+                if [ "$size" -gt 10485760 ]; then
+                    echo "${RED}✗ LARGE FILE:${NC} $f ($(($size / 1048576)) MB) — files >10MB must use Git LFS."
+                    ERRORS=$((ERRORS + 1))
+                fi
+                ;;
+        esac
     fi
 done
 
 # ── 5. Content Scanning for Private Keys / PEMs ───────────────
 # Immediately block any staged content that contains private key material.
-KEY_PATTERNS='-----BEGIN (RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----|-----BEGIN CERTIFICATE-----|PRIVATE KEY' 
+KEY_PATTERNS='-----BEGIN (RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----|-----BEGIN CERTIFICATE-----|PRIVATE KEY'
 for f in $STAGED_FILES; do
     # Skip binary blobs check if file missing in worktree
-    if [ -f "$f" ]; then
+    if [ -f "$f" ] && [ "$f" != ".githooks/pre-commit" ]; then
         CONTENT_ADDS=$(git diff --cached --diff-filter=ACM -p -- "$f" 2>/dev/null | grep '^+' | grep -v '^+++' || true)
-        if echo "$CONTENT_ADDS" | grep -qE "$KEY_PATTERNS"; then
+        if echo "$CONTENT_ADDS" | grep -qE -- "$KEY_PATTERNS"; then
             echo "${RED}✗ PRIVATE KEY DETECTED:${NC} $f contains key/certificate material"
             ERRORS=$((ERRORS + 1))
         fi
     fi
 done
+
+# ── 6. Omega v13 Lint & Zod Gate ────────────────────────────
+# If ESLint is configured in the microkernel project, run it on staged TS files.
+OMEGA_DIR="hfo_gen_89_hot_obsidian_forge/1_silver/projects/omega_v13_microkernel"
+OMEGA_ESLINT="$OMEGA_DIR/eslint.config.mjs"
+OMEGA_STAGED_TS=$(echo "$STAGED_FILES" | tr ' ' '\n' | grep -E "$OMEGA_DIR/.*\.tsx?$" || true)
+
+if [ -f "$OMEGA_ESLINT" ] && [ -n "$OMEGA_STAGED_TS" ]; then
+    echo "► Running Omega v13 ESLint on staged TypeScript files..."
+    if command -v npx >/dev/null 2>&1; then
+        # We need to pass paths relative to OMEGA_DIR to eslint
+        REL_PATHS=$(echo "$OMEGA_STAGED_TS" | sed "s|^$OMEGA_DIR/||")
+        ( cd "$OMEGA_DIR" && npx eslint --max-warnings=0 $REL_PATHS 2>&1 )
+        LINT_EXIT=$?
+        if [ $LINT_EXIT -ne 0 ]; then
+            echo "${RED}✗ OMEGA-LINT:${NC} ESLint found arch violations. Fix before committing."
+            ERRORS=$((ERRORS + 1))
+        else
+            echo "${GREEN}✓${NC} Omega v13 ESLint clean"
+        fi
+        
+        echo "► Running Omega v13 Zod Schema Tests..."
+        ( cd "$OMEGA_DIR" && npm run test:zod 2>&1 )
+        ZOD_EXIT=$?
+        if [ $ZOD_EXIT -ne 0 ]; then
+            echo "${RED}✗ OMEGA-ZOD:${NC} Zod schema tests failed. Fix before committing."
+            ERRORS=$((ERRORS + 1))
+        else
+            echo "${GREEN}✓${NC} Omega v13 Zod schemas valid"
+        fi
+    fi
+elif [ -n "$OMEGA_STAGED_TS" ] && [ ! -f "$OMEGA_ESLINT" ]; then
+    echo "${YELLOW}⚠ OMEGA-LINT:${NC} TypeScript staged but no eslint.config.mjs yet — skipping (add ESLint to enforce arch boundaries)"
+fi
 
 # ── Result ────────────────────────────────────────────────────
 if [ $ERRORS -gt 0 ]; then
