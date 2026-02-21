@@ -46,15 +46,14 @@ Run: python hfo_prey8_mcp_server.py
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import subprocess
 import sys
-import urllib.request
-import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -235,7 +234,7 @@ def _validate_agent(agent_id: str, gate_name: Optional[str] = None) -> Optional[
       3. If gate_name provided, agent is allowed to use that gate
     """
     if not agent_id or not agent_id.strip():
-        block_data = {
+        block_data: dict[str, Any] = {
             "reason": "DENY_BY_DEFAULT: agent_id is required",
             "agent_id": "",
             "gate": gate_name or "pre-gate",
@@ -355,11 +354,11 @@ def _chain_hash(parent_hash: str, nonce: str, data_json: str) -> str:
     payload = f"{parent_hash}:{nonce}:{data_json}"
     return hashlib.sha256(payload.encode()).hexdigest()
 
-def _content_hash(event: dict) -> str:
+def _content_hash(event: dict[str, Any]) -> str:
     """SHA256 content hash for deduplication."""
     return hashlib.sha256(json.dumps(event, sort_keys=True).encode()).hexdigest()
 
-def _trace_ids():
+def _trace_ids() -> tuple[str, str]:
     trace_id = secrets.token_hex(16)
     span_id = secrets.token_hex(8)
     return trace_id, span_id
@@ -369,7 +368,7 @@ def _trace_ids():
 # Helpers — Parsing
 # ---------------------------------------------------------------------------
 
-def _split_csv(s: str) -> list:
+def _split_csv(s: str) -> list[str]:
     """Split comma-separated string into non-empty trimmed items."""
     return [x.strip() for x in s.split(",") if x.strip()] if s else []
 
@@ -418,10 +417,10 @@ def _cloudevent(event_type: str, data: dict[str, Any], subject: str = "prey8",
     return event
 
 
-def _write_stigmergy(event: dict[str, Any]) -> int:
+def _write_stigmergy(event: dict[str, Any]) -> int | None:
     """Write a CloudEvent to stigmergy_events. Returns row id."""
     try:
-        from hfo_ssot_write import write_stigmergy_event, build_signal_metadata
+        from hfo_ssot_write import write_stigmergy_event, build_signal_metadata  # type: ignore
         agent_id = event.get("agent_id", "system")
         signal_meta = build_signal_metadata(
             port="P4",
@@ -454,7 +453,7 @@ def _write_stigmergy(event: dict[str, Any]) -> int:
                 ),
             )
             conn.commit()
-            row_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            row_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
             return row_id
         finally:
             conn.close()
@@ -470,7 +469,7 @@ def _session_state_path(agent_id: str) -> Path:
     return SESSION_STATE_DIR / f".prey8_session_{safe_id}.json"
 
 
-def _save_session(agent_id: str):
+def _save_session(agent_id: str) -> None:
     """Persist per-agent session state to disk. Every state change auto-saves."""
     session = _get_session(agent_id)
     state = {
@@ -502,13 +501,13 @@ def _load_session(agent_id: str) -> Optional[dict[str, Any]]:
         if agent_id == "p4_red_regnant" and SESSION_STATE_PATH.exists():
             try:
                 raw = SESSION_STATE_PATH.read_text(encoding="utf-8")
-                return json.loads(raw)
+                return cast(dict[str, Any], json.loads(raw))
             except (OSError, json.JSONDecodeError):
                 return None
         return None
     try:
         raw = path.read_text(encoding="utf-8")
-        return json.loads(raw)
+        return cast(dict[str, Any], json.loads(raw))
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -592,7 +591,7 @@ def _detect_memory_loss() -> list[dict[str, Any]]:
     return orphans
 
 
-def _record_memory_loss(orphan_data: dict[str, Any], recovery_source: str, agent_id: str = "unknown") -> None:
+def _record_memory_loss(orphan_data: dict[str, Any], recovery_source: str, agent_id: str = "unknown") -> int | None:
     """Write a memory_loss CloudEvent to SSOT."""
     event_data = {
         "loss_type": "session_state_reset",
@@ -621,10 +620,10 @@ def _record_memory_loss(orphan_data: dict[str, Any], recovery_source: str, agent
     row_id = _write_stigmergy(event)
     session = _get_session(agent_id)
     session["memory_loss_count"] += 1
-    return row_id
+    return row_id or 0
 
 
-def _check_and_recover_session(agent_id: str) -> Optional[int]:
+def _check_and_recover_session(agent_id: str) -> Optional[dict[str, Any]]:
     """
     On server start / perceive: check for prior session state on disk for this agent.
     If found with unclosed session, record memory loss and clean up.
@@ -800,8 +799,6 @@ def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") 
     else:
         return False, "\n\n".join(output)
 
-import re
-
 def _semantic_anti_slop_check(text: str) -> bool:
     """
     Idea 1: Semantic Anti-Slop Validation (Pattern Matching).
@@ -931,7 +928,7 @@ def prey8_perceive(
     memory_refs: str,
     stigmergy_digest: str,
     web_search_query: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """
     P -- PERCEIVE: Start a PREY8 session. First tile in the mosaic.
     Port pair: P0 OBSERVE + P6 ASSIMILATE (sensing + memory).
@@ -1259,7 +1256,7 @@ def prey8_react(
     meadows_level: int,
     meadows_justification: str,
     sequential_plan: str,
-) -> dict:
+) -> dict[str, Any]:
     """
     R -- REACT: Analyze context and form strategy. Second tile in the mosaic.
     Port pair: P1 BRIDGE + P7 NAVIGATE (data fabric + strategic steering).
@@ -1511,7 +1508,7 @@ def prey8_execute(
     artifacts: str,
     p4_adversarial_check: str,
     sbe_test_file: str,
-) -> dict:
+) -> dict[str, Any]:
     """
     E -- EXECUTE: Track an execution step. Middle tile(s) in the mosaic.
     Port pair: P2 SHAPE + P4 DISRUPT (creation + adversarial testing).
@@ -1796,7 +1793,7 @@ def prey8_yield(
     next_steps: str = "",
     insights: str = "",
     song_requests: str = "",
-) -> dict:
+) -> dict[str, Any]:
     """
     Y -- YIELD: Close the PREY8 loop. Final tile in the mosaic.
     Port pair: P3 INJECT + P5 IMMUNIZE (delivery + defense/testing).
@@ -1946,7 +1943,7 @@ def prey8_yield(
     session_start_ts = datetime.fromisoformat(session["started_at"]).timestamp()
     try:
         # Fetch all execute events for this session to get stored hashes
-        stored_hashes = {}
+        stored_hashes: dict[str, str] = {}
         for row in conn.execute(
             "SELECT data_json FROM stigmergy_events WHERE event_type LIKE '%execute%' AND data_json LIKE ?",
             (f'%"{session["session_id"]}"%',)
@@ -2143,7 +2140,7 @@ def prey8_yield(
             "total_tiles": len(session["chain"]) + 1,
             "chain_intact": True,
             "genesis_to_yield": [
-                {"step": t["step"], "hash": t["chain_hash"][:16] + "..."}
+                {"step": str(t["step"]), "hash": str(t["chain_hash"])[:16] + "..."}
                 for t in session["chain"]
             ] + [{"step": "YIELD", "hash": c_hash[:16] + "..."}],
             "all_gates_passed": [
@@ -2181,7 +2178,7 @@ def prey8_yield(
 # ===== UTILITY TOOLS =====
 
 @mcp.tool()
-def prey8_fts_search(query: str, limit: int = 10) -> list:
+def prey8_fts_search(query: str, limit: int = 10) -> list[dict[str, Any]]:
     """
     Full-text search against the SSOT documents (FTS5).
     Available at any time (no session required).
@@ -2222,7 +2219,7 @@ def prey8_fts_search(query: str, limit: int = 10) -> list:
 
 
 @mcp.tool()
-def prey8_read_document(doc_id: int) -> dict:
+def prey8_read_document(doc_id: int) -> dict[str, Any]:
     """
     Read a specific document from the SSOT by ID.
     Available at any time (no session required).
@@ -2263,7 +2260,7 @@ def prey8_read_document(doc_id: int) -> dict:
 def prey8_query_stigmergy(
     event_type_pattern: str = "%",
     limit: int = 10,
-) -> list:
+) -> list[dict[str, Any]]:
     """
     Query stigmergy events from the SSOT.
     Available at any time (no session required).
@@ -2309,7 +2306,7 @@ def prey8_query_stigmergy(
 
 
 @mcp.tool()
-def prey8_ssot_stats(agent_id: str = "") -> dict:
+def prey8_ssot_stats(agent_id: str = "") -> dict[str, Any]:
     """
     Get current SSOT database statistics.
 
@@ -2325,7 +2322,7 @@ def prey8_ssot_stats(agent_id: str = "") -> dict:
         event_count = conn.execute("SELECT COUNT(*) FROM stigmergy_events").fetchone()[0]
         total_words = conn.execute("SELECT SUM(word_count) FROM documents").fetchone()[0]
 
-        sources = {}
+        sources: dict[str, dict[str, Any]] = {}
         for row in conn.execute(
             "SELECT source, COUNT(*), SUM(word_count) FROM documents GROUP BY source ORDER BY COUNT(*) DESC"
         ):
@@ -2382,7 +2379,7 @@ def prey8_ssot_stats(agent_id: str = "") -> dict:
 
 
 @mcp.tool()
-def prey8_session_status(agent_id: str = "") -> dict:
+def prey8_session_status(agent_id: str = "") -> dict[str, Any]:
     """
     Get current PREY8 session status, flow state, chain integrity,
     and what gate fields are required for the next step.
@@ -2481,7 +2478,7 @@ def prey8_session_status(agent_id: str = "") -> dict:
 
 
 @mcp.tool()
-def prey8_validate_chain(session_id: str = "", agent_id: str = "") -> dict:
+def prey8_validate_chain(session_id: str = "", agent_id: str = "") -> dict[str, Any]:
     """
     Validate the tamper-evident hash chain for a session.
 
@@ -2614,7 +2611,7 @@ def prey8_validate_chain(session_id: str = "", agent_id: str = "") -> dict:
 
 
 @mcp.tool()
-def prey8_detect_memory_loss() -> dict:
+def prey8_detect_memory_loss() -> dict[str, Any]:
     """
     Scan SSOT for memory loss events, orphaned sessions, gate blocks, and tamper alerts.
 
