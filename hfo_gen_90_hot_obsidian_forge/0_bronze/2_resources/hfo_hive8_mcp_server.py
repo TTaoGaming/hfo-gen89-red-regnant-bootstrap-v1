@@ -30,6 +30,7 @@ import json
 import os
 import secrets
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -174,6 +175,58 @@ def _write_stigmergy(event: dict) -> int:
             return cursor.lastrowid
         finally:
             conn.close()
+
+def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") -> tuple[bool, str]:
+    """
+    Run CI/CD fast checks (e.g., pytest, syntax checks) to ensure CORRECT-BY-CONSTRUCTION genesis.
+    Returns (passed, output_string).
+    """
+    root_dir = _find_root()
+    output = []
+    passed = True
+
+    # 1. Syntax check on modified/created Python files
+    all_artifacts = [x.strip() for x in artifacts_created.split(",") if x.strip()] + \
+                    [x.strip() for x in artifacts_modified.split(",") if x.strip()]
+    py_files = [f for f in all_artifacts if f.endswith(".py")]
+    
+    for py_file in py_files:
+        file_path = root_dir / py_file
+        if file_path.exists():
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "py_compile", str(file_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode != 0:
+                    passed = False
+                    output.append(f"Syntax error in {py_file}:\n{result.stderr}")
+            except Exception as e:
+                passed = False
+                output.append(f"Failed to syntax check {py_file}: {str(e)}")
+
+    # 2. Run pytest in the workspace root
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "--maxfail=1", "--disable-warnings", "-q"],
+            cwd=str(root_dir),
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        if result.returncode != 0:
+            passed = False
+            output.append(f"Pytest failed:\n{result.stdout}\n{result.stderr}")
+    except Exception as e:
+        passed = False
+        output.append(f"Failed to run pytest: {str(e)}")
+
+    if passed:
+        return True, "All fast checks passed."
+    else:
+        return False, "\n\n".join(output)
 
 def _validate_agent(agent_id: str, gate_name: str = None) -> Optional[dict]:
     if not agent_id or not agent_id.strip():
@@ -386,6 +439,20 @@ def hive8_evolve(agent_id: str, validated_foresight_token: str, delivery_manifes
 
     if validated_foresight_token not in session["validated_foresight_tokens"]:
         return {"status": "ERROR", "error": "Tamper Alert: validated_foresight_token mismatch."}
+
+    # ---- CI/CD FAST CHECKS (CORRECT-BY-CONSTRUCTION) ----
+    checks_passed, checks_output = _run_fast_checks(delivery_manifest, "")
+    if not checks_passed:
+        return {
+            "status": "GATE_BLOCKED",
+            "gate": "EVOLVE",
+            "port_pair": "P3_INJECT + P7_NAVIGATE",
+            "agent_id": agent_id,
+            "error": "CI/CD Fast Checks Failed. You must fix the code before evolving.",
+            "bricked": True,
+            "instruction": "Review the test output and fix the errors. CORRECT-BY-CONSTRUCTION genesis requires passing tests.",
+            "test_output": checks_output
+        }
 
     session["phase"] = "evolved"
 
