@@ -60,7 +60,7 @@ def load_env(root: Path) -> dict:
 def load_pointers(root: Path) -> dict:
     """Load the blessed pointer registry."""
     # Try well-known names
-    for name in ["hfo_gen89_pointers_blessed.json", "hfo_pointers_blessed.json"]:
+    for name in ["hfo_gen90_pointers_blessed.json", "hfo_gen89_pointers_blessed.json", "hfo_pointers_blessed.json"]:
         fp = root / name
         if fp.exists():
             data = json.loads(fp.read_text(encoding="utf-8"))
