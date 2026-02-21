@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "reporters": [
+    "html",
+    "clear-text",
+    "progress"
+  ],
+  "testRunner": "jest",
+  "coverageAnalysis": "all",
+  "jest": {
+    "configFile": "./jest.stryker.config.js",
+    "enableFindRelatedTests": true
+  },
+  "mutate": [
+    "audio_engine_plugin.ts",
+    "symbiote_injector_plugin.ts"
+  ],
+  "thresholds": {
+    "high": 90,
+    "low": 80,
+    "break": 75
+  },
+  "timeoutMS": 10000,
+  "timeoutFactor": 1.5
+}

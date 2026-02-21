@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.stryker-tmp/
+reports/
+*.js.map
+coverage/
+*.mp4
+*.mp3
