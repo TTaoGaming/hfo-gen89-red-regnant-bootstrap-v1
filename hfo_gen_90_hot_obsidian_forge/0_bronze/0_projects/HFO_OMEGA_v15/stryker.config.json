@@ -13,7 +13,7 @@
     "enableFindRelatedTests": true
   },
   "mutate": [
-    "plugin_supervisor.ts"
+    "gesture_fsm.ts"
   ],
   "thresholds": {
     "high": 90,
