@@ -98,6 +98,10 @@ Call `prey8_react` with the perceive nonce AND all five gate fields:
 - `analysis`: Your interpretation of the context.
 - `plan`: High-level plan (what and why).
 - `shared_data_refs`: Cross-references bridged from other contexts.
+- `navigation_intent`: Strategic direction and C2 steering decision.
+- `meadows_level`: Leverage level (1-13). CRITICAL: If <4, you are WRONG (trapped in parameters/buffers). If <8, you are INCOMPLETE (trapped in delays/info flows). You must operate at L8+ (Rules/Self-Org/Goal/Paradigm) to alter the architecture. L13 is the Divine Pantheon (HFO).
+- `meadows_justification`: Why this leverage level is correct.
+- `sequential_plan`: Ordered reasoning steps.
 - `navigation_intent`: Strategic direction / C2 steering decision.
 - `meadows_level`: Which Meadows leverage level (1-13) this session operates at.
 - `meadows_justification`: Why this leverage level is the right intervention.
