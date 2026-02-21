@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>tldraw Exemplar</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: transparent; }
+        #tldraw-container { width: 100vw; height: 100vh; background: transparent; }
+        /* Force tldraw to be transparent */
+        .tl-container { background: rgba(255, 255, 255, 0.5) !important; }
+    </style>
+    <!-- React and ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- tldraw -->
+    <link rel="stylesheet" href="https://unpkg.com/@tldraw/tldraw@2.0.0/tldraw.css" />
+    <script src="https://unpkg.com/@tldraw/tldraw@2.0.0/tldraw.umd.js"></script>
+</head>
+<body>
+    <div id="tldraw-container"></div>
+    <script>
+// @ts-nocheck
+
+        const { Tldraw } = window.tldraw;
+        const root = ReactDOM.createRoot(document.getElementById('tldraw-container'));
+        root.render(React.createElement(Tldraw));
+    
+</script>
+</body>
+</html>

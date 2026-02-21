@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<!--
+  demo_2026-02-20_1619.html — Omega v13 Spatial OS · Topological Assembly Demo
+  Timestamp: 2026-02-20T16:19
+
+  Z-Stack topology (bottom → top):
+    z= 0  video#omega-video-bg        ← Mirror Substrate (camera, scaleX(-1), pointer-events:none)
+    z=10  canvas#omega-babylon-canvas ← Universal Physics/Vis Substrate     (pointer-events:none)
+    z=20  iframe#omega-tldraw         ← Dumb Consumer Target                (pointer-events:auto)
+    z=30  div#omega-settings          ← UI Shell — children opt in          (pointer-events:none)
+    z=40  VisualizationPlugin div     ← Skeleton Overlay                    (pointer-events:none)
+
+  WYSIWYG: Index fingertip on screen = exact tldraw cursor position.
+  Keybinding: ` (backtick) or F1 → toggle settings panel visibility.
+  Build:   node build_demo2.mjs        → dist/demo2.js
+  Serve:   python -m http.server 8090  → http://localhost:8090/demo_2026-02-20_1619.html
+
+  STRUCTURAL ENFORCEMENT (LAWS OF PHYSICS):
+    [PASS] CSP Meta Tag prevents rogue external scripts from bypassing the DI Linker
+    [PASS] CSS !important rules enforce Z-Stack topology (TS cannot override)
+    [PASS] CSS !important rules enforce pointer-events (TS cannot create invisible event walls)
+    [PASS] No plugin internal math / ML / FSM logic modified
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- STRUCTURAL ENFORCEMENT: Content Security Policy (Laws of Physics) -->
+  <!-- Prevents rogue external scripts from bypassing the DI Linker -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval' https://cdn.babylonjs.com https://cdn.jsdelivr.net https://storage.googleapis.com https://fonts.googleapis.com https://fonts.gstatic.com; frame-src *;" />
+  <title>Omega v13 · Spatial OS · 2026-02-20T16:19</title>
+  <style>
+    /* STRUCTURAL ENFORCEMENT: Z-Stack Topology & Pointer Events (Laws of Physics) */
+    /* These rules use !important to prevent the TS bootstrapper from hallucinating invalid states */
+    :root {
+      --z-video: 0;
+      --z-babylon: 10;
+      --z-tldraw: 20;
+      --z-settings: 30;
+      --z-viz: 40;
+    }
+
+    #omega-video-bg { z-index: var(--z-video) !important; pointer-events: none !important; }
+    #omega-babylon-canvas { z-index: var(--z-babylon) !important; pointer-events: none !important; }
+    #omega-tldraw { z-index: var(--z-tldraw) !important; pointer-events: auto !important; }
+    #omega-settings { z-index: var(--z-settings) !important; pointer-events: none !important; }
+    #omega-viz-layer { z-index: var(--z-viz) !important; pointer-events: none !important; }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #050505;   /* darkest possible — video overscan edges don't flash */
+      color: #fff;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+
+    /* ── Diagnostic HUD ── tiny readout, bottom-left, never blocks input ── */
+    #omega-hud {
+      position: fixed;
+      bottom: 12px;
+      left: 12px;
+      z-index: 9998;
+      pointer-events: none;
+      font-family: monospace;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.45);
+      line-height: 1.6;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    }
+
+    /* ── Version badge ── top-right corner ── */
+    #omega-badge {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      z-index: 9999;
+      pointer-events: none;
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.28);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Keybinding hint ── */
+    #omega-hint {
+      position: fixed;
+      top: 24px;
+      right: 8px;
+      z-index: 9999;
+      pointer-events: none;
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.22);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Diagnostic HUD — populated by HUD updater script below -->
+  <div id="omega-hud">
+    Omega v13 · Spatial OS · 2026-02-20T16:19<br/>
+    <span id="hud-fps">fps: –</span>&nbsp;&nbsp;
+    <span id="hud-state">state: IDLE</span>&nbsp;&nbsp;
+    <span id="hud-pos">pos: –</span>
+  </div>
+
+  <div id="omega-badge">v13 · DI-Ω</div>
+  <div id="omega-hint">` or F1 → toggle panel</div>
+
+  <!--
+    Optional: Havok Physics WASM (loaded before bundle so it lands on window).
+    Comment out if Babylon / Havok is not configured — demo degrades gracefully
+    to CSS-only hand visualisation.
+  -->
+  <!-- <script src="https://cdn.babylonjs.com/havok/HavokPhysics.umd.js"></script> -->
+
+  <!-- Compiled bootstrapper bundle (output of: node build_demo2.mjs) -->
+  <script type="module" src="./dist/demo2.js"></script>
+
+  <!-- HUD updater — now handled by HudPlugin in the TS dependency graph -->
+
+</body>
+</html>

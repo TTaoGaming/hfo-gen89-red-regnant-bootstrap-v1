@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Canvas Exemplar</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: transparent; }
+        canvas { display: block; background: rgba(255, 255, 255, 0.5); box-shadow: 0 0 10px rgba(0,0,0,0.1); margin: 20px auto; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <canvas id="drawCanvas" width="800" height="600"></canvas>
+    <script>
+// @ts-nocheck
+
+        const canvas = document.getElementById('drawCanvas');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+
+        canvas.addEventListener('pointerdown', (e) => {
+            isDrawing = true;
+            ctx.beginPath();
+            ctx.moveTo(e.offsetX, e.offsetY);
+        });
+
+        canvas.addEventListener('pointermove', (e) => {
+            if (isDrawing) {
+                ctx.lineTo(e.offsetX, e.offsetY);
+                ctx.stroke();
+            }
+        });
+
+        canvas.addEventListener('pointerup', () => {
+            isDrawing = false;
+        });
+        
+        canvas.addEventListener('pointercancel', () => {
+            isDrawing = false;
+        });
+    
+</script>
+</body>
+</html>

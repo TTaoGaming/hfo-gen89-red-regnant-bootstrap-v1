@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<!--
+  EXEMPLAR A — Omega v13 Babylon Landmark Visualizer (Standalone, CDN-only)
+  ─────────────────────────────────────────────────────────────────────────
+  Zero npm. Zero build step. Open via any local HTTP server:
+      python -m http.server 5173
+      then browse to: http://localhost:5173/exemplars/babylon_landmarks/exemplar_babylon_landmarks_standalone.html
+
+  What you see:
+    • Mirrored camera feed fills the viewport (video z=0)
+    • Babylon canvas overlays it (z=10, transparent background)
+    • 21 white spheres per detected hand track the landmarks
+    • Landmark 8 (index fingertip) is LARGE and colour-coded:
+        open_palm   → #1aff80  lime green
+        pointer_up  → #ff8800  orange
+        closed_fist → #ff2222  red
+
+  Gesture detection reuses the exact curl-score / leaky-bucket logic from
+  demo_2026-02-20.ts so the thresholds / colours will carry over unchanged.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Omega v13 — Babylon Landmarks (Exemplar A, Standalone)</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      width: 100vw; height: 100vh;
+      overflow: hidden;
+      background: #050505;
+    }
+
+    /* Layer z-stack ─────────────────────────────────────────── */
+    #video-bg, #babylon-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+    }
+    #video-bg {
+      object-fit: cover;
+      z-index: 0;
+      transform: scaleX(-1); /* mirror so user sees themselves naturally */
+    }
+    #babylon-canvas {
+      z-index: 10;
+      background: transparent; /* video shows through */
+      pointer-events: none;
+    }
+
+    /* HUD ──────────────────────────────────────────────────── */
+    #hud {
+      position: fixed;
+      bottom: 12px; left: 12px;
+      z-index: 100;
+      pointer-events: none;
+      font-family: monospace;
+      font-size: 12px;
+      color: rgba(255,255,255,0.5);
+      text-shadow: 0 1px 3px #000;
+      line-height: 1.7;
+    }
+
+    /* Start button ──────────────────────────────────────────── */
+    #start-btn {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 200;
+      padding: 18px 36px;
+      font-size: 20px;
+      font-family: monospace;
+      cursor: pointer;
+      background: #0d1117;
+      color: #1aff80;
+      border: 2px solid #1aff80;
+      border-radius: 8px;
+      box-shadow: 0 0 24px rgba(26,255,128,0.25);
+      transition: box-shadow 0.2s;
+    }
+    #start-btn:hover {
+      box-shadow: 0 0 40px rgba(26,255,128,0.5);
+    }
+
+    /* Gesture legend ────────────────────────────────────────── */
+    #legend {
+      position: fixed;
+      top: 12px; right: 12px;
+      z-index: 100;
+      pointer-events: none;
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.9;
+      color: rgba(255,255,255,0.45);
+    }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+  </style>
+</head>
+<body>
+
+  <video id="video-bg" autoplay playsinline muted></video>
+  <canvas id="babylon-canvas"></canvas>
+
+  <div id="hud">
+    Omega v13 · Babylon Landmarks · Exemplar A<br>
+    <span id="hud-fps">fps: –</span>&nbsp;&nbsp;
+    <span id="hud-state">state: IDLE</span><br>
+    <span id="hud-hands">hands: 0</span>
+  </div>
+
+  <div id="legend">
+    Fingertip (LM 8) colour:<br>
+    <span class="dot" style="background:#1aff80"></span>open_palm<br>
+    <span class="dot" style="background:#ff8800"></span>pointer_up<br>
+    <span class="dot" style="background:#ff2222"></span>closed_fist<br>
+    <span class="dot" style="background:#cccccc"></span>other landmarks
+  </div>
+
+  <button id="start-btn">▶ Start Camera</button>
+
+  <!-- ── Babylon.js UMD (sets global BABYLON) ─────────────────────────── -->
+  <script src="https://cdn.babylonjs.com/babylon.js"></script>
+
+  <!-- ── Main logic (ESM, uses MediaPipe from CDN) ─────────────────────── -->
+  <script type="module">
+// @ts-nocheck
+
+    import { FilesetResolver, HandLandmarker } from
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs';
+
+    // ── Constants ──────────────────────────────────────────────────────────
+    const FINGERTIP_LM = 8;   // index fingertip landmark index
+    const DOT_SIZE     = 0.012;
+    const TIP_SIZE     = 0.024;
+    const SEGMENT      = 4;   // low-poly spheres for performance
+
+    // State → Color3
+    const STATE_COLOR = {
+      open_palm:   new BABYLON.Color3(0.10, 1.00, 0.50), // lime
+      pointer_up:  new BABYLON.Color3(1.00, 0.53, 0.00), // orange
+      closed_fist: new BABYLON.Color3(1.00, 0.13, 0.13), // red
+    };
+    const DEFAULT_COLOR = new BABYLON.Color3(0.80, 0.80, 0.80); // white-ish
+
+    // Gesture stability: leaky-bucket hysteresis (identical to demo_2026-02-20.ts)
+    const BUCKET_MAX = 10, BUCKET_LEAK = 1, BUCKET_FILL = 3, GESTURE_THRESHOLD = 7;
+    const gestureBuckets  = {}; // handIdx → { pointer_up, closed_fist, open_palm }
+    const currentGestures = {}; // handIdx → string
+
+    // ── Babylon setup ──────────────────────────────────────────────────────
+    const canvas = document.getElementById('babylon-canvas');
+    const engine = new BABYLON.Engine(canvas, true, { alpha: true });
+    const scene  = new BABYLON.Scene(engine);
+
+    // Fully transparent clear — the video element behind shows through.
+    scene.clearColor = new BABYLON.Color4(0, 0, 0, 0);
+
+    // Orthographic camera: maps MediaPipe's normalized (0→1, 0→1) coords
+    // directly to world-space.  No perspective distortion.
+    const cam = new BABYLON.ArcRotateCamera('cam', -Math.PI / 2, Math.PI / 2, 10,
+      BABYLON.Vector3.Zero(), scene);
+    cam.mode        = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
+    cam.orthoLeft   = 0;
+    cam.orthoRight  = 1;
+    cam.orthoTop    = 0;    // Y=0 at top (MediaPipe Y increases downward)
+    cam.orthoBottom = 1;
+    cam.position    = new BABYLON.Vector3(0.5, 0.5, -10);
+    cam.setTarget(BABYLON.Vector3.Zero());
+
+    // Ambient light so emissiveColor still pops even with HDR disabled
+    const light = new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), scene);
+    light.intensity = 1.2;
+
+    engine.runRenderLoop(() => scene.render());
+    window.addEventListener('resize', () => engine.resize());
+
+    // ── Sphere pool ────────────────────────────────────────────────────────
+    // handIdx → { meshes[21], materials[21] }
+    const handPools = new Map();
+
+    function getOrCreatePool(idx) {
+      if (handPools.has(idx)) return handPools.get(idx);
+
+      const meshes    = [];
+      const materials = [];
+      for (let i = 0; i < 21; i++) {
+        const isTip = (i === FINGERTIP_LM);
+        const mesh  = BABYLON.MeshBuilder.CreateSphere(
+          `h${idx}_lm${i}`, { diameter: isTip ? TIP_SIZE : DOT_SIZE, segments: SEGMENT }, scene);
+        const mat   = new BABYLON.StandardMaterial(`h${idx}_mat${i}`, scene);
+        mat.diffuseColor  = DEFAULT_COLOR.clone();
+        mat.emissiveColor = DEFAULT_COLOR.clone(); // self-lit, pops over any video
+        mat.specularColor = BABYLON.Color3.Black();
+        mesh.material   = mat;
+        mesh.isPickable = false;
+        mesh.isVisible  = false;
+        meshes.push(mesh);
+        materials.push(mat);
+      }
+
+      const pool = { meshes, materials };
+      handPools.set(idx, pool);
+      return pool;
+    }
+
+    function hideAllHands() {
+      for (const { meshes } of handPools.values())
+        for (const m of meshes) m.isVisible = false;
+    }
+
+    // ── Gesture detection ──────────────────────────────────────────────────
+    // Curl score: 0 = fully extended finger, 1 = fully curled.
+    function curlScore(mcp, pip, dip) {
+      const ba = { x: mcp.x - pip.x, y: mcp.y - pip.y, z: mcp.z - pip.z };
+      const bc = { x: dip.x - pip.x, y: dip.y - pip.y, z: dip.z - pip.z };
+      const dot = ba.x*bc.x + ba.y*bc.y + ba.z*bc.z;
+      const mag = Math.sqrt(ba.x**2 + ba.y**2 + ba.z**2) *
+                  Math.sqrt(bc.x**2 + bc.y**2 + bc.z**2);
+      if (mag === 0) return 0;
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI;
+      return Math.max(0, Math.min(1, (180 - angle) / 90));
+    }
+
+    function detectGesture(lm, idx) {
+      const iCurl  = curlScore(lm[5],  lm[6],  lm[7]);
+      const mCurl  = curlScore(lm[9],  lm[10], lm[11]);
+      const rCurl  = curlScore(lm[13], lm[14], lm[15]);
+      const pCurl  = curlScore(lm[17], lm[18], lm[19]);
+      const palmW  = Math.hypot(lm[5].x - lm[17].x, lm[5].y - lm[17].y, lm[5].z - lm[17].z);
+      const tDist  = Math.hypot(lm[4].x - lm[9].x,  lm[4].y - lm[9].y,  lm[4].z - lm[9].z)  / (palmW || 1);
+      const tmDist = Math.hypot(lm[4].x - lm[12].x, lm[4].y - lm[12].y, lm[4].z - lm[12].z) / (palmW || 1);
+
+      const thumbScore   = Math.max(0, Math.min(1, (2.0 - tDist)  / 1.0));
+      const tmScore      = Math.max(0, Math.min(1, (1.5 - tmDist) / 1.0));
+      const pointerScore = (1 - iCurl)*0.4 + mCurl*0.1 + rCurl*0.1 + pCurl*0.1 + tmScore*0.3;
+      const fistScore    = iCurl*0.2 + mCurl*0.2 + rCurl*0.2 + pCurl*0.2 + thumbScore*0.2;
+      const palmScore    = (1-iCurl)*0.2 + (1-mCurl)*0.2 + (1-rCurl)*0.2 + (1-pCurl)*0.2 + (1-thumbScore)*0.2;
+
+      let raw = 'open_palm', max = palmScore;
+      if (pointerScore > max && pointerScore > 0.6) { raw = 'pointer_up';  max = pointerScore; }
+      if (fistScore    > max && fistScore    > 0.6) { raw = 'closed_fist'; }
+
+      if (!gestureBuckets[idx]) {
+        gestureBuckets[idx]  = { pointer_up: 0, closed_fist: 0, open_palm: 0 };
+        currentGestures[idx] = 'open_palm';
+      }
+      const b = gestureBuckets[idx];
+      for (const k of ['pointer_up', 'closed_fist', 'open_palm'])
+        b[k] = Math.max(0, b[k] - BUCKET_LEAK);
+      b[raw] = Math.min(BUCKET_MAX, b[raw] + BUCKET_FILL);
+
+      if      (b.pointer_up  >= GESTURE_THRESHOLD) currentGestures[idx] = 'pointer_up';
+      else if (b.closed_fist >= GESTURE_THRESHOLD) currentGestures[idx] = 'closed_fist';
+      else if (b.open_palm   >= GESTURE_THRESHOLD) currentGestures[idx] = 'open_palm';
+
+      return currentGestures[idx];
+    }
+
+    // ── MediaPipe ──────────────────────────────────────────────────────────
+    let handLandmarker  = null;
+    let lastVideoTime   = -1;
+    let frameCount      = 0;
+    let fpsTimer        = performance.now();
+
+    const video  = document.getElementById('video-bg');
+    const hudFps = document.getElementById('hud-fps');
+    const hudSt  = document.getElementById('hud-state');
+    const hudHnd = document.getElementById('hud-hands');
+
+    async function setupMediaPipe() {
+      const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm');
+      handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+          delegate: 'GPU',
+        },
+        runningMode:                 'VIDEO',
+        numHands:                    2,
+        minHandDetectionConfidence:  0.5,
+        minHandPresenceConfidence:   0.5,
+        minTrackingConfidence:       0.5,
+      });
+    }
+
+    // ── Main render / detection loop ───────────────────────────────────────
+    let lastGesture = 'IDLE';
+
+    function predictLoop() {
+      requestAnimationFrame(predictLoop);
+      if (!handLandmarker || video.readyState < 2) return;
+      if (video.currentTime === lastVideoTime) return;
+      lastVideoTime = video.currentTime;
+
+      // FPS
+      frameCount++;
+      const now = performance.now();
+      if (now - fpsTimer > 1000) {
+        hudFps.textContent = `fps: ${Math.round(frameCount * 1000 / (now - fpsTimer))}`;
+        frameCount = 0;
+        fpsTimer   = now;
+      }
+
+      const results = handLandmarker.detectForVideo(video, performance.now());
+
+      if (!results.landmarks || results.landmarks.length === 0) {
+        hideAllHands();
+        hudSt.textContent  = 'state: NO HANDS';
+        hudHnd.textContent = 'hands: 0';
+        return;
+      }
+
+      hideAllHands();
+      hudHnd.textContent = `hands: ${results.landmarks.length}`;
+
+      for (let idx = 0; idx < results.landmarks.length; idx++) {
+        const lm      = results.landmarks[idx];
+        const gesture = detectGesture(lm, idx);
+        if (idx === 0) hudSt.textContent = `state: ${gesture}`;
+
+        const { meshes, materials } = getOrCreatePool(idx);
+        const tipColor = STATE_COLOR[gesture] ?? DEFAULT_COLOR;
+
+        for (let i = 0; i < 21; i++) {
+          const pt = lm[i];
+
+          // Mirror X to match the video's CSS scaleX(-1) transform.
+          // All Y values increase downward (same as screen), no flip needed.
+          meshes[i].position.x = 1.0 - pt.x;
+          meshes[i].position.y = pt.y;
+          meshes[i].position.z = 0;
+          meshes[i].isVisible  = true;
+
+          // Landmark 8 = index fingertip → state colour; rest = neutral white
+          const col = (i === FINGERTIP_LM) ? tipColor : DEFAULT_COLOR;
+          materials[i].diffuseColor.copyFrom(col);
+          materials[i].emissiveColor.copyFrom(col);
+        }
+      }
+    }
+
+    // ── Start button ───────────────────────────────────────────────────────
+    document.getElementById('start-btn').onclick = async (e) => {
+      e.currentTarget.textContent = '⏳ Loading MediaPipe…';
+      e.currentTarget.disabled    = true;
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 1280, height: 720 } });
+      video.srcObject = stream;
+      await video.play();
+
+      await setupMediaPipe();
+
+      e.currentTarget.remove();
+      requestAnimationFrame(predictLoop);
+      console.log('[Exemplar A] Live — Babylon landmark visualizer running.');
+    };
+  
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+GÚ…GÚ…GÚ… HFO Gen89 Pre-Commit Gate GÚ…GÚ…GÚ…
+\033[0;32mG£Ù\033[0m Root cleanliness OK
+\033[0;32mG£Ù\033[0m No secret filenames staged

@@ -1,0 +1,3 @@
+7071ba5 P5 Pyre Praetorian daemon: resource governance + fail-closed gates + SW-4 receipts
+a5d1441 GOLD: EXPLANATION_NATARAJA_WAIL_OF_THE_BANSHEE_GEN89_PHOENIX_PROTOCOL_V1
+ce8fba1 v3.0: Fail-closed port-pair gates on all PREY8 steps

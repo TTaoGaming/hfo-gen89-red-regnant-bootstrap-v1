@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<!--
+  index_demo2.html — Omega v13 Layered Compositor Demo (2026-02-20)
+
+  Layer z-stack:
+    z=0   video#omega-video-bg       ← camera, full viewport, mirrored
+    z=10  canvas#omega-babylon-canvas ← Babylon.js physics dots + state halos
+    z=20  iframe#omega-tldraw         ← tldraw whiteboard (80% opacity)
+    z=30  div#omega-settings          ← Config Mosaic panel (human-operated)
+    z=40  VisualizationPlugin div     ← hand skeleton, dot/ring (pointer-events:none)
+
+  WYSIWYG: index fingertip on screen = exact tldraw cursor position.
+  Backtick (`) or F1 toggles the settings panel visibility.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Omega v13 — Layered Compositor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      /* Darkest possible background so video overscan edges aren't jarring */
+      background: #050505;
+      color: #fff;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+
+    /* ── HUD ── tiny diagnostic readout, always on top, never blocks ── */
+    #omega-hud {
+      position: fixed;
+      bottom: 12px;
+      left: 12px;
+      z-index: 9998;
+      pointer-events: none;
+      font-family: monospace;
+      font-size: 11px;
+      color: rgba(255,255,255,0.45);
+      line-height: 1.5;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+    }
+
+    /* ── Backtick hint ── */
+    #omega-hint {
+      position: fixed;
+      top: 8px;
+      right: 8px;
+      z-index: 9999;
+      pointer-events: none;
+      font-size: 11px;
+      color: rgba(255,255,255,0.3);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Diagnostic HUD (populated by JS; pointer-events:none so it never blocks) -->
+  <div id="omega-hud">
+    Omega v13 · LayeredCompositor · 2026-02-20<br/>
+    <span id="hud-fps">fps: –</span> &nbsp;
+    <span id="hud-state">state: IDLE</span> &nbsp;
+    <span id="hud-pos">pos: –</span>
+  </div>
+
+  <div id="omega-hint">` or F1 → toggle panel</div>
+
+  <!--
+    ── Optional: Havok Physics WASM (loaded before demo.js so it's on window) ──
+    Comment this out if you don't have Babylon / Havok set up — the demo
+    gracefully degrades to CSS-only hand viz.
+  -->
+  <!-- <script src="https://cdn.babylonjs.com/havok/HavokPhysics.umd.js"></script> -->
+
+  <!-- The compiled demo bundle -->
+  <script type="module" src="./dist/demo2.js"></script>
+
+  <!-- Tiny HUD updater — listens to event bus after the module loads -->
+  <script type="module">
+// @ts-nocheck
+
+    // Wait a tick so the demo module has time to set up globalEventBus
+    setTimeout(() => {
+      try {
+        const { globalEventBus } = window.__omegaExports || {};
+        if (!globalEventBus) return; // standalone mode without exports
+
+        const hudFps   = document.getElementById('hud-fps');
+        const hudState = document.getElementById('hud-state');
+        const hudPos   = document.getElementById('hud-pos');
+
+        let frames = 0, lastT = performance.now();
+        globalEventBus.subscribe('FRAME_PROCESSED', (hands) => {
+          frames++;
+          const now = performance.now();
+          if (now - lastT > 1000) {
+            if (hudFps) hudFps.textContent = `fps: ${frames}`;
+            frames = 0; lastT = now;
+          }
+          if (hands && hands.length > 0 && hudPos) {
+            const h = hands[0];
+            hudPos.textContent = `pos: (${(h.x*100).toFixed(1)}%, ${(h.y*100).toFixed(1)}%)`;
+          }
+        });
+
+        globalEventBus.subscribe('STATE_CHANGE', ({ currentState }) => {
+          if (hudState) hudState.textContent = `state: ${currentState}`;
+        });
+      } catch(_) {}
+    }, 500);
+  
+</script>
+
+</body>
+</html>

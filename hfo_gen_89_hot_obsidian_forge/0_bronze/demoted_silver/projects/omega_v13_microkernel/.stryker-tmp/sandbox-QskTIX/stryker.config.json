@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "reporters": [
+    "html",
+    "clear-text",
+    "progress"
+  ],
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "npx jest --testPathPattern='test_plugin_supervisor|test_highlander_mutex|test_iframe_delivery' --no-coverage 2>&1"
+  },
+  "coverageAnalysis": "all",
+  "mutate": [
+    "plugin_supervisor.ts",
+    "highlander_mutex_adapter.ts",
+    "iframe_delivery_adapter.ts",
+    "gesture_fsm.ts",
+    "mediapipe_vision_plugin.ts",
+    "gesture_fsm_plugin.ts"
+  ]
+}

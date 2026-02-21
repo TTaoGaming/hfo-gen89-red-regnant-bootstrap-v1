@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Omega v13 Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: sans-serif;
+        }
+        #info {
+            position: absolute;
+            top: 50px;
+            left: 10px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h1>Omega v13 Microkernel Demo</h1>
+        <p>Move mouse to simulate hand tracking.</p>
+        <p>Click and hold to simulate "pointer_up" (COMMIT state).</p>
+        <p>Release to simulate "open_palm" (READY state).</p>
+        <p>Stop moving to simulate stillness (COAST state).</p>
+    </div>
+    <!-- We need to compile the TS files to JS to run in browser, or use a bundler like Vite/Webpack. -->
+    <!-- For simplicity, we can use a script tag with type="module" if we compile them, or just use ts-node/esbuild. -->
+    <script type="module" src="./dist/demo.js"></script>
+</body>
+</html>

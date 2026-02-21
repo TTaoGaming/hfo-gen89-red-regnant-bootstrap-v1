@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="TRACKING_SYSTEM">
+  <!-- 
+    Omega v13 Microkernel: Defense-in-Depth Gesture FSM
+    
+    Features:
+    - COAST variants for graceful degradation & inertia
+    - Schmitt Trigger (Confidence Hysteresis) to prevent boundary thrashing
+    - Asymmetrical Leaky Bucket (Dwell / Anti-Midas) to prevent accidental triggers
+  -->
+  <datamodel>
+    <!-- Schmitt Trigger Thresholds (Hysteresis) -->
+    <data id="conf_high" expr="0.64" /> <!-- Must exceed this to enter/regain -->
+    <data id="conf_low" expr="0.50" />  <!-- Must drop below this to COAST -->
+    
+    <!-- Leaky Bucket Dwell Limits (Anti-Midas) -->
+    <data id="dwell_limit_ready" expr="15" /> <!-- frames/ticks to enter READY -->
+    <data id="dwell_limit_commit" expr="10" /> <!-- frames/ticks to enter COMMIT -->
+    
+    <!-- Current State Variables (updated via events) -->
+    <data id="current_confidence" expr="0.0" />
+    <data id="dwell_accumulator" expr="0" />
+  </datamodel>
+
+  <state id="TRACKING_SYSTEM">
+    <initial>
+      <transition target="IDLE" />
+    </initial>
+
+    <!-- ==========================================
+         IDLE STATE (Hands detected, waiting)
+         ========================================== -->
+    <state id="IDLE">
+      <onentry>
+        <log label="FSM" expr="'Entered IDLE'" />
+        <assign location="dwell_accumulator" expr="0" />
+      </onentry>
+      
+      <!-- Schmitt Trigger: Drop to COAST if confidence falls below low threshold -->
+      <transition event="tick" cond="current_confidence &lt; conf_low" target="IDLE_COAST" />
+      
+      <!-- Reinforce IDLE: Reset dwell accumulator if closed fist is detected -->
+      <transition event="gesture.closed_fist" cond="current_confidence &gt;= conf_high">
+        <assign location="dwell_accumulator" expr="0" />
+      </transition>
+
+      <!-- Leaky Bucket: Accumulate dwell if confidence is high and gesture matches -->
+      <transition event="gesture.open_palm" cond="current_confidence &gt;= conf_high">
+        <assign location="dwell_accumulator" expr="dwell_accumulator + 1" />
+      </transition>
+      
+      <!-- Leaky Bucket: Drain if gesture lost or wrong gesture -->
+      <transition event="tick" cond="current_confidence &gt;= conf_low and current_confidence &lt; conf_high">
+        <assign location="dwell_accumulator" expr="Math.max(0, dwell_accumulator - 2)" />
+      </transition>
+      <transition event="gesture.*" cond="_event.name != 'gesture.open_palm' and _event.name != 'gesture.closed_fist'">
+        <assign location="dwell_accumulator" expr="Math.max(0, dwell_accumulator - 2)" />
+      </transition>
+
+      <!-- Transition to READY when bucket is full -->
+      <transition event="tick" cond="dwell_accumulator &gt;= dwell_limit_ready" target="READY" />
+    </state>
+
+    <!-- ==========================================
+         IDLE COAST STATE (Tracking loss)
+         ========================================== -->
+    <state id="IDLE_COAST">
+      <onentry>
+        <log label="FSM" expr="'Entered IDLE_COAST - Inertia active'" />
+        <send event="action.coast_start" />
+      </onentry>
+      
+      <!-- Snaplock on regain: Schmitt Trigger high threshold -->
+      <transition event="tick" cond="current_confidence &gt;= conf_high" target="IDLE" />
+      
+      <!-- Lifecycle guarantee: total loss -->
+      <transition event="timeout.coast" target="IDLE">
+        <send event="action.lifecycle_reset" />
+      </transition>
+    </state>
+
+    <!-- ==========================================
+         READY STATE (Hover / Ghost / Latched)
+         ========================================== -->
+    <state id="READY">
+      <onentry>
+        <log label="FSM" expr="'Entered READY - Latching to hand'" />
+        <assign location="dwell_accumulator" expr="0" />
+        <send event="action.ready_enter" />
+      </onentry>
+
+      <!-- Schmitt Trigger: Drop to COAST -->
+      <transition event="tick" cond="current_confidence &lt; conf_low" target="READY_COAST" />
+
+      <!-- Leaky Bucket for COMMIT -->
+      <transition event="gesture.pointer_up" cond="current_confidence &gt;= conf_high">
+        <assign location="dwell_accumulator" expr="dwell_accumulator + 1" />
+      </transition>
+
+      <!-- Leaky Bucket: Drain if gesture lost or wrong gesture -->
+      <transition event="tick" cond="current_confidence &gt;= conf_low and current_confidence &lt; conf_high">
+        <assign location="dwell_accumulator" expr="Math.max(0, dwell_accumulator - 2)" />
+      </transition>
+      <transition event="gesture.*" cond="_event.name != 'gesture.pointer_up' and _event.name != 'gesture.closed_fist'">
+        <assign location="dwell_accumulator" expr="Math.max(0, dwell_accumulator - 2)" />
+      </transition>
+
+      <!-- Transition to COMMIT when bucket is full -->
+      <transition event="tick" cond="dwell_accumulator &gt;= dwell_limit_commit" target="COMMIT_POINTER" />
+      
+      <!-- Return to IDLE if closed fist is detected (deny by default) -->
+      <transition event="gesture.closed_fist" cond="current_confidence &gt;= conf_high" target="IDLE" />
+    </state>
+
+    <!-- ==========================================
+         READY COAST STATE (Tracking loss while ready)
+         ========================================== -->
+    <state id="READY_COAST">
+      <onentry>
+        <log label="FSM" expr="'Entered READY_COAST'" />
+      </onentry>
+      
+      <!-- Snaplock on regain -->
+      <transition event="tick" cond="current_confidence &gt;= conf_high" target="READY" />
+      
+      <!-- Lifecycle guarantee: emit pointercancel on total loss -->
+      <transition event="timeout.coast" target="IDLE">
+        <send event="action.pointercancel" />
+      </transition>
+    </state>
+
+    <!-- ==========================================
+         COMMIT POINTER STATE (Interaction / PointerDown)
+         ========================================== -->
+    <state id="COMMIT_POINTER">
+      <onentry>
+        <log label="FSM" expr="'Entered COMMIT_POINTER - W3C Pointer Down'" />
+        <send event="action.pointerdown" />
+        <assign location="dwell_accumulator" expr="0" />
+      </onentry>
+
+      <!-- Schmitt Trigger: Drop to COAST -->
+      <transition event="tick" cond="current_confidence &lt; conf_low" target="COMMIT_COAST" />
+
+      <!-- Leaky Bucket for RELEASE to READY -->
+      <transition event="gesture.open_palm" cond="current_confidence &gt;= conf_high">
+        <assign location="dwell_accumulator" expr="dwell_accumulator + 1" />
+      </transition>
+      
+      <!-- Leaky Bucket for RELEASE to IDLE -->
+      <transition event="gesture.closed_fist" cond="current_confidence &gt;= conf_high">
+        <assign location="dwell_accumulator" expr="dwell_accumulator + 1" />
+      </transition>
+
+      <!-- Leaky Bucket: Drain if gesture lost or wrong gesture -->
+      <transition event="tick" cond="current_confidence &gt;= conf_low and current_confidence &lt; conf_high">
+        <assign location="dwell_accumulator" expr="Math.max(0, dwell_accumulator - 2)" />
+      </transition>
+      <transition event="gesture.*" cond="_event.name != 'gesture.open_palm' and _event.name != 'gesture.closed_fist'">
+        <assign location="dwell_accumulator" expr="Math.max(0, dwell_accumulator - 2)" />
+      </transition>
+
+      <!-- Transition to READY when bucket is full and gesture is open_palm -->
+      <transition event="tick" cond="dwell_accumulator &gt;= dwell_limit_commit and _event.name == 'gesture.open_palm'" target="READY">
+        <send event="action.pointerup" />
+      </transition>
+      
+      <!-- Transition to IDLE when bucket is full and gesture is closed_fist -->
+      <transition event="tick" cond="dwell_accumulator &gt;= dwell_limit_commit and _event.name == 'gesture.closed_fist'" target="IDLE">
+        <send event="action.pointerup" />
+      </transition>
+    </state>
+
+    <!-- ==========================================
+         COMMIT COAST STATE (Tracking loss while interacting)
+         ========================================== -->
+    <state id="COMMIT_COAST">
+      <onentry>
+        <log label="FSM" expr="'Entered COMMIT_COAST - Graceful degradation'" />
+      </onentry>
+      
+      <!-- Snaplock on regain -->
+      <transition event="tick" cond="current_confidence &gt;= conf_high" target="COMMIT_POINTER" />
+      
+      <!-- Lifecycle guarantee: emit pointerup on tracking loss to prevent stuck drags -->
+      <transition event="timeout.coast" target="IDLE">
+        <send event="action.pointerup" />
+      </transition>
+    </state>
+
+  </state>
+</scxml>

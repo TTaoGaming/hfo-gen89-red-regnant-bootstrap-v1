@@ -58,8 +58,12 @@
       "desc": "HFO meta-layer — architecture, governance"
     },
     "ssot.db": {
-      "path": "hfo_gen_89_hot_obsidian_forge/2_gold/resources/hfo_gen89_ssot.sqlite",
+      "path": "hfo_gen_90_hot_obsidian_forge/2_gold/2_resources/hfo_gen90_ssot.sqlite",
       "desc": "SSOT SQLite database (149 MB, self-describing Memory Quine)"
+    },
+    "ssot.gen89_legacy": {
+      "path": "hfo_gen_90_hot_obsidian_forge/0_bronze/3_archives/gen89_legacy/hfo_gen89_ssot.sqlite",
+      "desc": "Legacy Gen 89 SSOT SQLite database (Read-Only)"
     },
     "pal.resolver": {
       "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py",
