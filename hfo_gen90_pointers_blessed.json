@@ -14,7 +14,7 @@
       "desc": "Environment template (copy to .env)"
     },
     "root.pointers_blessed": {
-      "path": "hfo_gen_90_hot_obsidian_forge/3_hyper_fractal_obsidian/2_resources/hfo_gen90_pointers_blessed.json",
+      "path": "hfo_gen90_pointers_blessed.json",
       "desc": "This file \u2014 blessed pointer registry"
     },
     "root.gitignore": {
@@ -102,7 +102,7 @@
       "desc": "Resource Governor \u2014 hard 80% GPU ceiling, VRAM backpressure, swap monitoring for background daemons"
     },
     "agent.p4_red_regnant": {
-      "path": ".github/agents/hfo_gen_89_p4_red_regent_bootstrap_v1.agent.md",
+      "path": ".github/agents/hfo_gen_90_p4_red_regent_bootstrap_v1.agent.md",
       "desc": "P4 Red Regnant custom agent definition for VS Code Copilot"
     },
     "config.mcp_servers": {
@@ -134,7 +134,7 @@
       "desc": "P5 CONTINGENCY spell \u2014 automated resurrection, Phoenix Protocol, death monitoring"
     },
     "agent.p5_pyre_praetorian": {
-      "path": ".github/agents/hfo_gen_89_p5_pyre_praetorian_bootstrap_v1.agent.md",
+      "path": ".github/agents/hfo_gen_90_p5_pyre_praetorian_bootstrap_v1.agent.md",
       "desc": "P5 Pyre Praetorian custom agent definition for VS Code Copilot"
     },
     "chimera.loop": {
@@ -222,7 +222,7 @@
       "desc": "P7 FORESIGHT AI Daemon \u2014 hourly Gemini 2.5 Flash intelligent Meadows L1-L13 mapping, markdown reports + stigmergy"
     },
     "agent.p7_cartographer": {
-      "path": ".github/agents/hfo_gen_89_p7_cartographer_v1.agent.md",
+      "path": ".github/agents/hfo_gen_90_p7_cartographer_v1.agent.md",
       "desc": "P7 Spider Sovereign Cartographer custom agent definition for VS Code Copilot"
     },
     "p7.spell_gate": {
@@ -268,6 +268,10 @@
     "supervisor.p5": {
       "path": "hfo_gen_90_hot_obsidian_forge/0_bronze/2_resources/hfo_p5_supervisor.py",
       "desc": "P5 Pyre Praetorian Lifecycle & Defense Supervisor \u2014 7 anomaly detectors (D1-D7), defense score 0-100, trend analysis, recommendations"
+    },
+    "agent.p6_devourer": {
+      "path": ".github/agents/hfo_gen_90_p6_devourer_v1.agent.md",
+      "desc": "P6 Kraken Keeper (Devourer of Depths and Dreams) custom agent definition for VS Code Copilot"
     }
   }
 }
