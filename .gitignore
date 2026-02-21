@@ -76,4 +76,4 @@ reports/
 # Session scratch scripts (housekeeping)
 _scratch/
 # ── VSCode extension packages (generated artifacts) ──────────
-*.vsix
+*.vsixcommit_output.txt
