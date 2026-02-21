@@ -273,7 +273,7 @@ def _validate_agent(agent_id: str, gate_name: Optional[str] = None) -> Optional[
                 "role": "Dynamic swarm node (full access)",
             }
         else:
-            block_data = {
+            block_data_3: dict[str, Any] = {
                 "reason": f"DENY_BY_DEFAULT: agent_id '{agent_id}' not in AGENT_REGISTRY and does not match swarm patterns",
                 "agent_id": agent_id,
                 "gate": gate_name or "pre-gate",
@@ -282,7 +282,7 @@ def _validate_agent(agent_id: str, gate_name: Optional[str] = None) -> Optional[
             }
             block_event = _cloudevent(
                 f"hfo.gen{GEN}.prey8.gate_blocked",
-                block_data,
+                block_data_3,
                 "prey-agent-denied",
             )
             _write_stigmergy(block_event)
@@ -295,7 +295,7 @@ def _validate_agent(agent_id: str, gate_name: Optional[str] = None) -> Optional[
     if gate_name:
         agent_spec = AGENT_REGISTRY[agent_id]
         if gate_name not in agent_spec["allowed_gates"]:
-            block_data = {
+            block_data_2: dict[str, Any] = {
                 "reason": f"LEAST_PRIVILEGE: agent '{agent_id}' not authorized for {gate_name} gate",
                 "agent_id": agent_id,
                 "gate": gate_name,
@@ -305,7 +305,7 @@ def _validate_agent(agent_id: str, gate_name: Optional[str] = None) -> Optional[
             }
             block_event = _cloudevent(
                 f"hfo.gen{GEN}.prey8.gate_blocked",
-                block_data,
+                block_data_2,
                 "prey-agent-denied",
             )
             _write_stigmergy(block_event)
@@ -417,7 +417,7 @@ def _cloudevent(event_type: str, data: dict[str, Any], subject: str = "prey8",
     return event
 
 
-def _write_stigmergy(event: dict[str, Any]) -> int | None:
+def _write_stigmergy(event: dict[str, Any]) -> int:
     """Write a CloudEvent to stigmergy_events. Returns row id."""
     try:
         from hfo_ssot_write import write_stigmergy_event, build_signal_metadata  # type: ignore
@@ -428,13 +428,13 @@ def _write_stigmergy(event: dict[str, Any]) -> int | None:
             daemon_name=f"prey8_mcp_{agent_id}",
             daemon_version=SERVER_VERSION
         )
-        return write_stigmergy_event(
+        return int(write_stigmergy_event(
             event_type=event["type"],
             subject=event.get("subject", ""),
             data=event["data"],
             signal_metadata=signal_meta,
             source=event["source"]
-        )
+        ))
     except ImportError:
         conn = _get_conn()
         try:
@@ -591,7 +591,7 @@ def _detect_memory_loss() -> list[dict[str, Any]]:
     return orphans
 
 
-def _record_memory_loss(orphan_data: dict[str, Any], recovery_source: str, agent_id: str = "unknown") -> int | None:
+def _record_memory_loss(orphan_data: dict[str, Any], recovery_source: str, agent_id: str = "unknown") -> int:
     """Write a memory_loss CloudEvent to SSOT."""
     event_data = {
         "loss_type": "session_state_reset",
@@ -620,7 +620,7 @@ def _record_memory_loss(orphan_data: dict[str, Any], recovery_source: str, agent
     row_id = _write_stigmergy(event)
     session = _get_session(agent_id)
     session["memory_loss_count"] += 1
-    return row_id or 0
+    return row_id
 
 
 def _check_and_recover_session(agent_id: str) -> Optional[dict[str, Any]]:
@@ -673,7 +673,7 @@ def _check_and_recover_session(agent_id: str) -> Optional[dict[str, Any]]:
 # Each gate requires structured fields matching its port pair's workflow.
 # Missing fields = GATE_BLOCKED. No SSOT write. Agent is bricked.
 
-GATE_SPECS = {
+GATE_SPECS: dict[str, dict[str, Any]] = {
     "PERCEIVE": {
         "port_pair": "P0_OBSERVE + P6_ASSIMILATE",
         "required_fields": ["observations", "memory_refs", "stigmergy_digest"],
@@ -848,8 +848,8 @@ def _validate_gate(gate_name: str, fields: dict[str, Any], agent_id: str = "") -
     This function focuses on structural field validation.
     """
     spec = GATE_SPECS[gate_name]
-    missing = []
-    empty = []
+    missing: list[str] = []
+    empty: list[str] = []
 
     for field_name in spec["required_fields"]:
         value = fields.get(field_name)
