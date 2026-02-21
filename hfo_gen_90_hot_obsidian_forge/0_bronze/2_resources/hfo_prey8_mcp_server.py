@@ -758,6 +758,49 @@ def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") 
     else:
         return False, "\n\n".join(output)
 
+import urllib.request
+import urllib.error
+
+def _semantic_anti_slop_check(text: str) -> bool:
+    """
+    Idea 1: Semantic Anti-Slop Validation.
+    Uses Gemini API if available, otherwise falls back to entropy/length heuristics.
+    """
+    if not text or len(text.strip()) < 10:
+        return False
+        
+    # Fallback heuristic: check for repeated characters or too few unique words
+    words = text.strip().split()
+    unique_words = set(words)
+    if len(unique_words) < len(words) * 0.3 and len(words) > 10:
+        return False # Too much repetition
+        
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return True # Pass if no API key
+        
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+        payload = {
+            "contents": [{
+                "parts": [{"text": f"Analyze this text for 'slop' (low effort, meaningless filler, or hallucinated placeholder text like 'test plan', 'did the thing', 'asdf'). Reply ONLY with 'VALID' if it contains actual semantic meaning, or 'SLOP' if it is low-effort filler.\n\nText: {text}"}]
+            }],
+            "generationConfig": {
+                "temperature": 0.0,
+                "maxOutputTokens": 5
+            }
+        }
+        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
+            reply = res_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+            if "SLOP" in reply.upper():
+                return False
+    except Exception:
+        pass # Fail open on network error
+        
+    return True
+
 def _validate_gate(gate_name: str, fields: dict, agent_id: str = "") -> Optional[dict]:
     """
     Validate that all required gate fields are non-empty.
@@ -787,9 +830,12 @@ def _validate_gate(gate_name: str, fields: dict, agent_id: str = "") -> Optional
         elif isinstance(value, int) and field_name == "meadows_level":
             if value < 1 or value > 13:
                 empty.append(f"{field_name}(must be 1-13, got {value})")
-        elif isinstance(value, int) and field_name == "mutation_confidence":
-            if value < 0 or value > 100:
-                empty.append(f"{field_name}(must be 0-100, got {value})")
+        elif isinstance(value, (int, float)) and field_name == "mutation_confidence":
+            if value < 0 or value >= 100:
+                empty.append(f"{field_name}(must be 0 to <100, got {value}. 100% is epistemic arrogance.)")
+        elif isinstance(value, str) and field_name in ["tactical_plan", "strategic_plan", "sbe_given", "sbe_when", "sbe_then", "sequential_thinking"]:
+            if not _semantic_anti_slop_check(value):
+                empty.append(f"{field_name}(failed semantic anti-slop validation)")
 
     if missing or empty:
         session = _get_session(agent_id) if agent_id else {"session_id": "pre-session"}
@@ -896,6 +942,40 @@ def prey8_perceive(
     }, agent_id=agent_id)
     if gate_block:
         return gate_block
+
+    # ---- IDEA 4: Stigmergy Continuity Enforcement ----
+    conn = _get_conn()
+    try:
+        last_yield_row = conn.execute(
+            """SELECT data_json FROM stigmergy_events
+               WHERE event_type LIKE '%yield%'
+               ORDER BY timestamp DESC LIMIT 1"""
+        ).fetchone()
+        if last_yield_row:
+            try:
+                last_yield_data = json.loads(last_yield_row[0]).get("data", {})
+                last_next_steps = " ".join(last_yield_data.get("next_steps", []))
+                last_summary = last_yield_data.get("summary", "")
+                
+                # Simple semantic overlap check (words > 4 chars)
+                last_words = set(w.lower() for w in (last_next_steps + " " + last_summary).split() if len(w) > 4)
+                digest_words = set(w.lower() for w in stigmergy_digest.split() if len(w) > 4)
+                
+                overlap = last_words.intersection(digest_words)
+                if last_words and len(overlap) == 0 and "override continuity" not in stigmergy_digest.lower():
+                    return {
+                        "status": "GATE_BLOCKED",
+                        "gate": "PERCEIVE",
+                        "port_pair": "P0_OBSERVE + P6_ASSIMILATE",
+                        "agent_id": agent_id,
+                        "error": "Stigmergy Continuity Broken. Your digest ignores the previous session's output.",
+                        "bricked": True,
+                        "instruction": f"Read the last yield. It mentioned: {list(last_words)[:5]}. Your digest must incorporate this context or explicitly state 'override continuity'."
+                    }
+            except Exception:
+                pass
+    finally:
+        conn.close()
 
     # ---- Gate passed — proceed with perceive ----
 
@@ -1272,6 +1352,8 @@ def prey8_react(
     # Update per-agent session state
     session["react_token"] = react_token
     session["phase"] = "reacted"
+    session["meadows_level"] = meadows_level
+    session["cynefin_classification"] = cynefin_classification.strip()
     session["chain"].append({
         "step": "REACT",
         "nonce": react_token,
@@ -1444,6 +1526,20 @@ def prey8_execute(
 
     # ---- Gate passed — proceed with execute ----
 
+    # ---- IDEA 2: Cryptographic Artifact Binding (Hash generation) ----
+    root_dir = _find_root()
+    artifact_hashes = {}
+    for artifact in artifacts_list:
+        artifact_path = root_dir / artifact
+        if artifact_path.exists() and artifact_path.is_file():
+            try:
+                with open(artifact_path, "rb") as f:
+                    artifact_hashes[artifact] = hashlib.sha256(f.read()).hexdigest()
+            except Exception:
+                artifact_hashes[artifact] = "UNREADABLE"
+        else:
+            artifact_hashes[artifact] = "NOT_FOUND"
+
     parent_hash = session["chain"][-1]["chain_hash"]
     exec_token = _nonce()
     step_num = len(session["execute_tokens"]) + 1
@@ -1465,6 +1561,7 @@ def prey8_execute(
             "then": sbe_then.strip(),
         },
         "p2_artifacts": artifacts_list,
+        "p2_artifact_hashes": artifact_hashes,
         "p4_adversarial_check": p4_adversarial_check.strip(),
         "p4_fail_closed_gate": True,
         "gate": "EXECUTE",
@@ -1571,8 +1668,9 @@ def prey8_yield(
     - test_evidence: Comma-separated list of tests or validations performed
       (P5 IMMUNIZE workflow: DETECT -> QUARANTINE -> GATE -> HARDEN -> TEACH).
       How was the delivery verified?
-    - mutation_confidence: 0-100 integer representing confidence in test
-      coverage (Stryker-inspired). 0 = no tests, 100 = mutation-tested.
+    - mutation_confidence: 0 to <100 float representing confidence in test
+      coverage (Stryker-inspired). 0 = no tests. 100 is epistemic arrogance
+      and will be blocked. HFO goldilocks target is 80~99%.
       From 6-Defense SDD Stack doc 4: "Mutation Wall (Stryker 80-99%)".
     - immunization_status: "PASSED" or "FAILED" or "PARTIAL" — did the
       P5 IMMUNIZE gate pass? Only PASSED means full confidence.
@@ -1594,14 +1692,14 @@ def prey8_yield(
       The singer daemon reads these from yield events and sings them,
       creating a strange loop where each PREY8 cycle builds the hive songbook.
 
-    If ANY required field is empty, mutation_confidence is not 0-100, or
+    If ANY required field is empty, mutation_confidence is not 0 to <100, or
     immunization_status is not PASSED/FAILED/PARTIAL, you are GATE_BLOCKED.
 
     Args:
         summary: What was accomplished in this session.
         delivery_manifest: Comma-separated P3 INJECT deliveries.
         test_evidence: Comma-separated P5 IMMUNIZE test results.
-        mutation_confidence: 0-100 Stryker-inspired confidence score.
+        mutation_confidence: 0 to <100 float Stryker-inspired confidence score.
         immunization_status: PASSED / FAILED / PARTIAL (P5 gate result).
         completion_given: SW-4 Given precondition.
         completion_when: SW-4 When action.
@@ -1679,6 +1777,71 @@ def prey8_yield(
     }, agent_id=agent_id)
     if gate_block:
         return gate_block
+
+    # ---- IDEA 3: Dynamic Cynefin/Meadows Constraints ----
+    meadows_level = session.get("meadows_level", 1)
+    cynefin = session.get("cynefin_classification", "Clear").lower()
+    required_confidence = 0
+    if meadows_level >= 12:
+        required_confidence = 95
+    elif meadows_level >= 8 or cynefin in ["complex", "chaotic"]:
+        required_confidence = 90
+    elif meadows_level >= 5:
+        required_confidence = 70
+
+    if mutation_confidence < required_confidence:
+        return {
+            "status": "GATE_BLOCKED",
+            "gate": "YIELD",
+            "port_pair": "P3_INJECT + P5_IMMUNIZE",
+            "agent_id": agent_id,
+            "error": f"Dynamic Constraint Failed. Meadows L{meadows_level} / Cynefin '{cynefin}' requires mutation_confidence >= {required_confidence}. You provided {mutation_confidence}.",
+            "bricked": True,
+            "instruction": f"Increase test coverage to reach {required_confidence}% confidence before yielding."
+        }
+
+    # ---- IDEA 2: Cryptographic Artifact Binding ----
+    root_dir = _find_root()
+    conn = _get_conn()
+    try:
+        # Fetch all execute events for this session to get stored hashes
+        stored_hashes = {}
+        for row in conn.execute(
+            "SELECT data_json FROM stigmergy_events WHERE event_type LIKE '%execute%' AND data_json LIKE ?",
+            (f'%"{session["session_id"]}"%',)
+        ):
+            try:
+                data = json.loads(row[0]).get("data", {})
+                if data.get("session_id") == session["session_id"]:
+                    stored_hashes.update(data.get("p2_artifact_hashes", {}))
+            except Exception:
+                pass
+
+        # Verify hashes for all delivered artifacts
+        all_artifacts = _split_csv(artifacts_created) + _split_csv(artifacts_modified)
+        for artifact in all_artifacts:
+            if artifact in stored_hashes:
+                artifact_path = root_dir / artifact
+                current_hash = "NOT_FOUND"
+                if artifact_path.exists() and artifact_path.is_file():
+                    try:
+                        with open(artifact_path, "rb") as f:
+                            current_hash = hashlib.sha256(f.read()).hexdigest()
+                    except Exception:
+                        current_hash = "UNREADABLE"
+                
+                if current_hash != stored_hashes[artifact]:
+                    return {
+                        "status": "GATE_BLOCKED",
+                        "gate": "YIELD",
+                        "port_pair": "P3_INJECT + P5_IMMUNIZE",
+                        "agent_id": agent_id,
+                        "error": f"Cryptographic Binding Failed. Artifact '{artifact}' was modified after EXECUTE or does not match its recorded hash.",
+                        "bricked": True,
+                        "instruction": "Artifacts must not be tampered with between EXECUTE and YIELD. Re-run EXECUTE to record the new hash."
+                    }
+    finally:
+        conn.close()
 
     # ---- CI/CD FAST CHECKS (CORRECT-BY-CONSTRUCTION) ----
     checks_passed, checks_output = _run_fast_checks(artifacts_created, artifacts_modified)
@@ -2436,4 +2599,29 @@ def prey8_detect_memory_loss() -> dict:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="PREY8 MCP Server")
+    parser.add_argument("--port", type=int, default=None, choices=range(8),
+                        help="Octree port (0-7) to enforce tool restrictions for")
+    args = parser.parse_args()
+
+    if args.port is not None:
+        capsule_path = SESSION_STATE_DIR / "context_capsules" / f"port_{args.port}.json"
+        if capsule_path.exists():
+            try:
+                capsule = json.loads(capsule_path.read_text(encoding="utf-8"))
+                allowed_tools = set(capsule.get("allowed_tools", []))
+                
+                # Filter tools
+                all_tools = list(mcp._tool_manager._tools.keys())
+                for tool_name in all_tools:
+                    if tool_name not in allowed_tools:
+                        del mcp._tool_manager._tools[tool_name]
+                        
+                print(f"Enforcing Port {args.port} restrictions. Allowed tools: {allowed_tools}", file=sys.stderr)
+            except Exception as e:
+                print(f"WARNING: Failed to load port capsule {capsule_path}: {e}", file=sys.stderr)
+        else:
+            print(f"WARNING: Port capsule not found at {capsule_path}", file=sys.stderr)
+
     mcp.run(transport="stdio")

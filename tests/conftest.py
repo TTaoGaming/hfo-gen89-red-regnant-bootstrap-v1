@@ -1,5 +1,5 @@
 """
-tests/conftest.py — Shared fixtures for HFO Gen89 ATDD suite
+tests/conftest.py — Shared fixtures for HFO Gen90 ATDD suite
 =============================================================
 Provides: mock SSOT, mock Ollama, mock NPU, mock Gemini/OpenRouter,
           resource snapshot builder, governor factory, router factory.
@@ -70,19 +70,19 @@ def tmp_db_full(tmp_path: Path):
         );
 
         -- Mirror of the production enforce_signal_metadata BEFORE INSERT trigger.
-        -- Exempt prefixes: hfo.gen89.prey8.*, hfo.gen89.mission.*, hfo.gen89.chimera.*,
-        --                  hfo.gen88.*, system_health*, hfo.gen89.ssot_write.gate_block*
+        -- Exempt prefixes: hfo.gen90.prey8.*, hfo.gen90.mission.*, hfo.gen90.chimera.*,
+        --                  hfo.gen88.*, system_health*, hfo.gen90.ssot_write.gate_block*
         CREATE TRIGGER IF NOT EXISTS enforce_signal_metadata
         BEFORE INSERT ON stigmergy_events
         BEGIN
             SELECT CASE
                 WHEN (
-                    NEW.event_type NOT LIKE 'hfo.gen89.prey8.%'
-                    AND NEW.event_type NOT LIKE 'hfo.gen89.mission.%'
-                    AND NEW.event_type NOT LIKE 'hfo.gen89.chimera.%'
+                    NEW.event_type NOT LIKE 'hfo.gen90.prey8.%'
+                    AND NEW.event_type NOT LIKE 'hfo.gen90.mission.%'
+                    AND NEW.event_type NOT LIKE 'hfo.gen90.chimera.%'
                     AND NEW.event_type NOT LIKE 'hfo.gen88.%'
                     AND NEW.event_type NOT LIKE 'system_health%'
-                    AND NEW.event_type NOT LIKE 'hfo.gen89.ssot_write.gate_block%'
+                    AND NEW.event_type NOT LIKE 'hfo.gen90.ssot_write.gate_block%'
                     AND (
                         NEW.data_json IS NULL
                         OR json_extract(NEW.data_json, '$.signal_metadata') IS NULL

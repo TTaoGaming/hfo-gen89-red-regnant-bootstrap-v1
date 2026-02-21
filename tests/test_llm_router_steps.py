@@ -16,7 +16,7 @@ import pytest
 from pytest_bdd import given, when, then, scenario, scenarios, parsers
 
 # Add resources to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources"))
 
 # ── Import target under test ──────────────────────────────────────────────────
 # This import will FAIL until hfo_llm_router.py is created — that's expected.
@@ -312,7 +312,7 @@ def event_is_in_stigmergy(ctx, event_type, tmp_db):
 def event_has_fields(ctx, fields, tmp_db):
     field_list = [f.strip() for f in fields.split(",")]
     rows = sqlite3.connect(str(tmp_db)).execute(
-        "SELECT data_json FROM stigmergy_events WHERE event_type='hfo.gen89.llm_router.inference' ORDER BY id DESC LIMIT 1"
+        "SELECT data_json FROM stigmergy_events WHERE event_type='hfo.gen90.llm_router.inference' ORDER BY id DESC LIMIT 1"
     ).fetchall()
     assert rows, "No inference event found"
     data = json.loads(rows[0][0])
@@ -331,7 +331,7 @@ def router_strategy_is(ctx, strategy):
 @then("no os.getenv() calls are made outside the Config dataclass")
 def no_scattered_getenv():
     # Static analysis check — ensure hfo_llm_router.py has no bare os.getenv
-    router_file = Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_llm_router.py"
+    router_file = Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_llm_router.py"
     if not router_file.exists():
         pytest.skip("Router not yet implemented")
     src = router_file.read_text()

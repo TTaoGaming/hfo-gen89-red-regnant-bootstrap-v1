@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytest_bdd import given, when, then, scenarios, parsers
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources"))
 
 try:
     from hfo_resource_governor import (
@@ -191,10 +191,10 @@ def time_passes(ctx, n):
     import time
     time.sleep(min(n, 2))  # cap at 2s in tests
 
-@when('I query stigmergy for "hfo.gen89.governor.summary"')
+@when('I query stigmergy for "hfo.gen90.governor.summary"')
 def query_summary(ctx, tmp_db):
     ctx["summary_rows"] = sqlite3.connect(str(tmp_db)).execute(
-        "SELECT data_json FROM stigmergy_events WHERE event_type='hfo.gen89.governor.summary' ORDER BY id DESC LIMIT 1"
+        "SELECT data_json FROM stigmergy_events WHERE event_type='hfo.gen90.governor.summary' ORDER BY id DESC LIMIT 1"
     ).fetchall()
 
 @when("the governor initialises")
@@ -229,7 +229,7 @@ def stigmergy_event_written(ctx, event_type, tmp_db):
 @then(parsers.parse('the eviction reason is "{reason}"'))
 def eviction_reason(ctx, reason, tmp_db):
     rows = sqlite3.connect(str(tmp_db)).execute(
-        "SELECT data_json FROM stigmergy_events WHERE event_type='hfo.gen89.governor.eviction' ORDER BY id DESC LIMIT 1"
+        "SELECT data_json FROM stigmergy_events WHERE event_type='hfo.gen90.governor.eviction' ORDER BY id DESC LIMIT 1"
     ).fetchall()
     assert rows
     data = json.loads(rows[0][0])
@@ -290,10 +290,10 @@ def enforce_called(ctx):
     assert gov is not None
     assert gov.enforce_call_count >= 1
 
-@then(parsers.parse('at least one "hfo.gen89.governor.cycle" event is in stigmergy'))
+@then(parsers.parse('at least one "hfo.gen90.governor.cycle" event is in stigmergy'))
 def cycle_event(ctx, tmp_db):
     rows = sqlite3.connect(str(tmp_db)).execute(
-        "SELECT 1 FROM stigmergy_events WHERE event_type='hfo.gen89.governor.cycle'"
+        "SELECT 1 FROM stigmergy_events WHERE event_type='hfo.gen90.governor.cycle'"
     ).fetchall()
     assert rows
 
@@ -317,7 +317,7 @@ def governor_attr_equals(ctx, attr, val):
 
 @then(parsers.parse('no numeric literal "{lit}" appears in the governor enforcement logic'))
 def no_hardcoded_literal(lit):
-    gov_file = Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_resource_governor.py"
+    gov_file = Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_resource_governor.py"
     if not gov_file.exists():
         pytest.skip("Governor file not found")
     import re

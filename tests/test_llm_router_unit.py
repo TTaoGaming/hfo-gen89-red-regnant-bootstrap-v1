@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-RESOURCES = Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources"
+RESOURCES = Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources"
 sys.path.insert(0, str(RESOURCES))
 
 try:
@@ -123,7 +123,7 @@ def test_exhausted_when_all_fail(tmp_path, db):
             with pytest.raises(RouterExhausted):
                 router.generate("test prompt", role="advisory")
     rows = sqlite3.connect(str(db)).execute(
-        "SELECT 1 FROM stigmergy_events WHERE event_type='hfo.gen89.llm_router.exhausted'"
+        "SELECT 1 FROM stigmergy_events WHERE event_type='hfo.gen90.llm_router.exhausted'"
     ).fetchall()
     assert rows, "No exhausted event in stigmergy"
 
@@ -137,7 +137,7 @@ def test_ram_above_95_blocks_all(tmp_path, db):
         router.generate("test prompt", role="advisory")
     assert "RAM" in str(exc.value)
     rows = sqlite3.connect(str(db)).execute(
-        "SELECT 1 FROM stigmergy_events WHERE event_type='hfo.gen89.llm_router.ram_blocked'"
+        "SELECT 1 FROM stigmergy_events WHERE event_type='hfo.gen90.llm_router.ram_blocked'"
     ).fetchall()
     assert rows
 
@@ -186,14 +186,14 @@ def test_role_selects_provider(role, expected_provider, tmp_path, db):
 
 @skip
 def test_inference_event_written_to_stigmergy(tmp_path, db):
-    """SPEC: Every successful inference writes hfo.gen89.llm_router.inference."""
+    """SPEC: Every successful inference writes hfo.gen90.llm_router.inference."""
     npu_dir = tmp_path / "npu_model"; npu_dir.mkdir()
     cfg = make_config(tmp_path, db, npu_model_path=str(npu_dir), strategy="npu_first")
     router = LLMRouter(cfg)
     with patch.object(router, "_call_npu", return_value="response text"):
         router.generate("prompt", role="advisory")
     rows = sqlite3.connect(str(db)).execute(
-        "SELECT data_json FROM stigmergy_events WHERE event_type='hfo.gen89.llm_router.inference'"
+        "SELECT data_json FROM stigmergy_events WHERE event_type='hfo.gen90.llm_router.inference'"
     ).fetchall()
     assert rows, "No inference event written"
     data = json.loads(rows[0][0])

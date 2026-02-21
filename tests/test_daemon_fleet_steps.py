@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch, call
 import pytest
 from pytest_bdd import given, when, then, scenarios, parsers
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources"))
 
 try:
     from hfo_llm_router import LLMRouter, RouterConfig
@@ -126,7 +126,7 @@ def fleet_launches(ctx):
 def p0_runs(ctx):
     ctx["p0_ran"] = True
 
-@when('I count "hfo.gen89.p0.true_seeing" stigmergy events')
+@when('I count "hfo.gen90.p0.true_seeing" stigmergy events')
 def count_true_seeing(ctx, tmp_db):
     n = ctx.get("p0_runtime_minutes", 20)
     # Simulate: 1 event per 10 min = 2 events in 20 min
@@ -189,7 +189,7 @@ def router_invoked(ctx):
 @then("no direct httpx.post to Ollama is made from within _advisory_tick")
 def no_direct_httpx(ctx):
     # Static analysis check
-    octree_file = Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_octree_daemon.py"
+    octree_file = Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_octree_daemon.py"
     if not octree_file.exists():
         pytest.skip()
     src = octree_file.read_text()
@@ -207,7 +207,7 @@ def no_llm_call(ctx):
 @then("only psutil and urllib are used for data collection")
 def only_psutil_urllib(ctx):
     # Check _collect_true_seeing body in octree_daemon
-    octree_file = Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_octree_daemon.py"
+    octree_file = Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_octree_daemon.py"
     if not octree_file.exists():
         pytest.skip()
     src = octree_file.read_text()
@@ -226,7 +226,7 @@ def router_called_with_role(ctx, role):
 def llm_skipped(ctx):
     assert ctx.get("governor_gate") == "HOLD"
 
-@then('the daemon writes a "hfo.gen89.daemon.backpressure" stigmergy event')
+@then('the daemon writes a "hfo.gen90.daemon.backpressure" stigmergy event')
 def backpressure_event(ctx):
     assert True
 
@@ -250,7 +250,7 @@ def daemon_model_is(ctx, model, monkeypatch, tmp_db):
 
 @then(parsers.parse('the string "{s}" does not appear hardcoded in hfo_octree_daemon.py'))
 def not_hardcoded(s):
-    octree_file = Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_octree_daemon.py"
+    octree_file = Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_octree_daemon.py"
     if not octree_file.exists():
         pytest.skip()
     src = octree_file.read_text()
@@ -269,7 +269,7 @@ def models_from_env(ctx):
 @then(parsers.parse("P0 sleeps {n:d} seconds between ticks"))
 def p0_tick_rate(n, monkeypatch):
     monkeypatch.setenv("HFO_TICK_RATE_P0", str(n))
-    octree_file = Path(__file__).parent.parent / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_octree_daemon.py"
+    octree_file = Path(__file__).parent.parent / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "resources" / "hfo_octree_daemon.py"
     if not octree_file.exists():
         pytest.skip()
     # Would verify via config loading
