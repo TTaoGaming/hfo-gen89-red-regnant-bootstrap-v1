@@ -254,24 +254,41 @@ def _validate_agent(agent_id: str, gate_name: str = None) -> Optional[dict]:
 
     agent_id = agent_id.strip().lower()
     if agent_id not in AGENT_REGISTRY:
-        block_data = {
-            "reason": f"DENY_BY_DEFAULT: agent_id '{agent_id}' not in AGENT_REGISTRY",
-            "agent_id": agent_id,
-            "gate": gate_name or "pre-gate",
-            "timestamp": _now_iso(),
-            "server_version": SERVER_VERSION,
-        }
-        block_event = _cloudevent(
-            f"hfo.gen{GEN}.prey8.gate_blocked",
-            block_data,
-            "prey-agent-denied",
-        )
-        _write_stigmergy(block_event)
-        return {
-            "status": "GATE_BLOCKED",
-            "reason": f"DENY_BY_DEFAULT: agent_id '{agent_id}' is not registered. Must be one of: {list(AGENT_REGISTRY.keys())}",
-            "bricked": True,
-        }
+        # Dynamic registration for 8^n swarm agents
+        if agent_id.startswith("p") and len(agent_id) > 1 and agent_id[1].isdigit():
+            port = int(agent_id[1])
+            AGENT_REGISTRY[agent_id] = {
+                "display_name": f"Dynamic Swarm Agent ({agent_id})",
+                "ports": [port],
+                "allowed_gates": ["PERCEIVE", "REACT", "EXECUTE", "YIELD"],
+                "role": f"Dynamic swarm node on port {port}",
+            }
+        elif agent_id.startswith("swarm_") or agent_id.startswith("agent_"):
+            AGENT_REGISTRY[agent_id] = {
+                "display_name": f"Dynamic Swarm Agent ({agent_id})",
+                "ports": [0, 1, 2, 3, 4, 5, 6, 7],
+                "allowed_gates": ["PERCEIVE", "REACT", "EXECUTE", "YIELD"],
+                "role": "Dynamic swarm node (full access)",
+            }
+        else:
+            block_data = {
+                "reason": f"DENY_BY_DEFAULT: agent_id '{agent_id}' not in AGENT_REGISTRY and does not match swarm patterns",
+                "agent_id": agent_id,
+                "gate": gate_name or "pre-gate",
+                "timestamp": _now_iso(),
+                "server_version": SERVER_VERSION,
+            }
+            block_event = _cloudevent(
+                f"hfo.gen{GEN}.prey8.gate_blocked",
+                block_data,
+                "prey-agent-denied",
+            )
+            _write_stigmergy(block_event)
+            return {
+                "status": "GATE_BLOCKED",
+                "reason": f"DENY_BY_DEFAULT: agent_id '{agent_id}' is not registered and does not match swarm patterns (pX_*, swarm_*, agent_*).",
+                "bricked": True,
+            }
 
     if gate_name:
         agent_spec = AGENT_REGISTRY[agent_id]
@@ -1125,31 +1142,19 @@ def prey8_react(
         return gate_block
 
     # ---- L8+ Structural Enforcement for Strategic Tasks ----
-    strategic_keywords = ["architecture", "paradigm", "system", "strategy", "governance", "hfo", "octree", "pantheon", "diataxis"]
-    combined_text = f"{navigation_intent} {plan} {analysis}".lower()
-    is_strategic = any(kw in combined_text for kw in strategic_keywords)
-    
-    if is_strategic and meadows_level < 8:
-        alert_data = {
-            "alert_type": "meadows_trap_regression",
-            "step": "REACT",
-            "agent_id": agent_id,
-            "meadows_level": meadows_level,
-            "session_id": session["session_id"],
-            "timestamp": _now_iso(),
-        }
-        alert_event = _cloudevent(
-            f"hfo.gen{GEN}.prey8.gate_blocked",
-            alert_data,
-            "prey-gate-blocked",
-            agent_id=agent_id,
-        )
-        _write_stigmergy(alert_event)
+    if meadows_level < 4:
         return {
             "status": "ERROR",
-            "error": f"GATE_BLOCKED: Strategic probes require L8+ interventions. You submitted L{meadows_level}. "
-                     "You are trapped in the L1-L3 attractor basin. Elevate your thinking and try again.",
+            "error": f"GATE_BLOCKED: Meadows Level {meadows_level} is ALWAYS WRONG. You are trapped in the L1-L3 attractor basin (Parameters/Buffers/Structure). Elevate your thinking.",
         }
+    elif meadows_level < 8:
+        return {
+            "status": "ERROR",
+            "error": f"GATE_BLOCKED: Meadows Level {meadows_level} is INCOMPLETE. You are operating at the level of Delays/Feedback/Info Flows. You must reach L8+ (Rules/Self-Org/Goal/Paradigm) to alter the architecture.",
+        }
+    elif meadows_level == 13:
+        # L13 is the Divine Pantheon (HFO)
+        pass
 
     # ---- Gate passed — proceed with react ----
 
