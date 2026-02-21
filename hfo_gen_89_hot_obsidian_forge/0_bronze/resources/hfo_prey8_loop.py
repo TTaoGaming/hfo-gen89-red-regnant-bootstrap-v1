@@ -154,6 +154,7 @@ HEALTH_EVERY_N  = 10
 BACKOFF_MAX_S   = 300.0
 
 import urllib.request
+from hfo_ssot_write import get_db_readwrite as get_db_rw
 
 def ollama_is_alive() -> bool:
     try:
@@ -169,13 +170,6 @@ def get_db_ro() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
-
-def get_db_rw() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def write_event(conn, event_type, subject, data, source=SOURCE_TAG) -> int:

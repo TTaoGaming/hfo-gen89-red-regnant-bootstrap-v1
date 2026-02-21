@@ -130,12 +130,24 @@ def validate_signal_metadata(signal_metadata: dict) -> list[str]:
 # ═══════════════════════════════════════════════════════════════
 
 def get_db_readwrite(db_path: Optional[Path] = None) -> sqlite3.Connection:
-    """Get a read-write connection to the SSOT database."""
+    """Get a read-write connection to the SSOT database.
+
+    WAL mode: concurrent readers + 1 writer allowed.
+    busy_timeout=30000: wait up to 30s for write lock before raising.
+    isolation_level=None (autocommit): avoids implicit BEGIN that holds
+    write locks across Python statements. Callers must issue explicit
+    BEGIN / COMMIT if they need a transaction.
+    """
     path = db_path or SSOT_DB
-    conn = sqlite3.connect(str(path), timeout=10)
+    # isolation_level=None = autocommit — no implicit BEGIN that squats on the
+    # write lock between statements. The Python default ("") would BEGIN on the
+    # first DML and hold the lock until commit()/close(), which causes
+    # "database is locked" under concurrent daemon writes.
+    conn = sqlite3.connect(str(path), timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=30000")  # 30s — covers daemon write cycles
+    conn.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, faster than FULL
     return conn
 
 

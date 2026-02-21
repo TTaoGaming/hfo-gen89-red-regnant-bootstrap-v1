@@ -85,6 +85,14 @@
       "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_prey8_mcp_server.py",
       "desc": "PREY8 MCP server — structurally enforced P-R-E-Y loop (9 tools)"
     },
+    "omega.amalgam": {
+      "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/omega_v13_amalgam.py",
+      "desc": "Omega v13 source amalgamation tool — produces a single timestamped LLM context pack for external AI review"
+    },
+    "omega.project": {
+      "path": "hfo_gen_89_hot_obsidian_forge/1_silver/projects/omega_v13_microkernel",
+      "desc": "Omega v13 Microkernel project source root"
+    },
     "resource.governor": {
       "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_resource_governor.py",
       "desc": "Resource Governor — hard 80% GPU ceiling, VRAM backpressure, swap monitoring for background daemons"

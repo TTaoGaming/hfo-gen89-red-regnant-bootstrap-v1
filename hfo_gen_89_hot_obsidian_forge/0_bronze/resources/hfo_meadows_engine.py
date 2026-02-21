@@ -80,6 +80,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Callable
+from hfo_ssot_write import get_db_readwrite
 
 # ═══════════════════════════════════════════════════════════════
 # § 0  PATH RESOLUTION
@@ -135,13 +136,11 @@ EVT_SBE_VALIDATION         = f"hfo.gen{GEN}.meadows.sbe_validation"
 def get_db(readonly: bool = False) -> sqlite3.Connection:
     """Get SSOT database connection. WAL mode for concurrent reads."""
     if readonly:
-        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=10)
+        conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     else:
-        conn = sqlite3.connect(str(DB_PATH), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
-    conn.row_factory = sqlite3.Row
-    return conn
+        conn = get_db_readwrite(DB_PATH)
+        return conn
+
 
 
 def write_event(conn: sqlite3.Connection, event_type: str, subject: str,

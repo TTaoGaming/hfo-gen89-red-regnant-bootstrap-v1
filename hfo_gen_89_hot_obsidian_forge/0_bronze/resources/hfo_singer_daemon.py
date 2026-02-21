@@ -70,6 +70,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from hfo_ssot_write import get_db_readwrite
 
 # ═══════════════════════════════════════════════════════════════
 # PATH RESOLUTION VIA PAL (Path Abstraction Layer)
@@ -297,16 +298,6 @@ def get_db_readonly() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
-
-def get_db_readwrite() -> sqlite3.Connection:
-    """Open SSOT database in read-write mode (for stigmergy writes)."""
-    if not SSOT_DB.exists():
-        raise FileNotFoundError(f"SSOT database not found: {SSOT_DB}")
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def write_stigmergy_event(

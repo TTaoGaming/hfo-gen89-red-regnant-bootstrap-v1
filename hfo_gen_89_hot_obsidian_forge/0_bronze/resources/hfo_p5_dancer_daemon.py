@@ -254,6 +254,7 @@ except ImportError:
 
 import urllib.request
 import urllib.error
+from hfo_ssot_write import get_db_readwrite as get_db_rw
 
 def ollama_generate(
     model: str,
@@ -323,14 +324,6 @@ def get_db_ro() -> sqlite3.Connection:
     """Read-only SSOT connection."""
     conn = sqlite3.connect(f"file:{SSOT_DB}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
-    return conn
-
-def get_db_rw() -> sqlite3.Connection:
-    """Read-write SSOT connection with WAL mode."""
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 def write_event(

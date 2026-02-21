@@ -99,6 +99,7 @@ P5_SOURCE = f"hfo_p5_daemon_gen{GEN}_v1.0"
 sys.path.insert(0, str(BRONZE_RESOURCES))
 
 from hfo_p5_pyre_praetorian import (
+from hfo_ssot_write import get_db_readwrite
     check_ollama_online,
     check_ollama_loaded,
     check_disk_free_gb,
@@ -150,13 +151,6 @@ def get_db_readonly() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
-
-def get_db_readwrite() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def _now_iso() -> str:

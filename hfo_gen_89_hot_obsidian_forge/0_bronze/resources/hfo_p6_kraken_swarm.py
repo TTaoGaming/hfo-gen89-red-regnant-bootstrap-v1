@@ -93,6 +93,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from hfo_ssot_write import get_db_readwrite as _get_db_rw
 
 # ═══════════════════════════════════════════════════════════════
 # PATH RESOLUTION — ensure sibling modules are importable
@@ -348,16 +349,6 @@ SWARM_WORKER_DEFS: dict[str, dict] = {
 # ═══════════════════════════════════════════════════════════════
 # DATABASE HELPERS (fallback if daemon import fails)
 # ═══════════════════════════════════════════════════════════════
-
-def _get_db_rw() -> sqlite3.Connection:
-    """Get a read-write connection to SSOT."""
-    if HAS_DAEMON:
-        return get_db_readwrite()
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def _get_db_ro() -> sqlite3.Connection:

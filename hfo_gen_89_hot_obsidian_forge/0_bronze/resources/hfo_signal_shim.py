@@ -48,6 +48,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from hfo_ssot_write import get_db_readwrite as _get_db_rw
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -233,13 +234,6 @@ def build_signal_metadata(
 # ═══════════════════════════════════════════════════════════════
 # § 3  EMIT ENRICHED EVENT — Write to SSOT with signal_metadata
 # ═══════════════════════════════════════════════════════════════
-
-def _get_db_rw() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def emit_enriched_event(

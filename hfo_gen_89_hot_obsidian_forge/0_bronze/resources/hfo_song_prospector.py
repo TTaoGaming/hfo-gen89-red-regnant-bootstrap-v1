@@ -233,15 +233,6 @@ def get_db_readonly() -> sqlite3.Connection:
     return conn
 
 
-def get_db_readwrite() -> sqlite3.Connection:
-    if not SSOT_DB.exists():
-        raise FileNotFoundError(f"SSOT database not found: {SSOT_DB}")
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
-
 
 def write_stigmergy_event(
     conn: sqlite3.Connection,
@@ -349,6 +340,7 @@ def _strip_think_tags(text: str) -> str:
 
 PROSPECTOR_SYSTEM = """You are the Song Prospector — a creative intelligence that reads documents
 from a knowledge system called HFO (Hive Fleet Obsidian) and identifies patterns
+from hfo_ssot_write import get_db_readwrite
 that could become SONGS.
 
 HFO has two kinds of songs:

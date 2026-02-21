@@ -58,6 +58,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from hfo_ssot_write import get_db_readwrite as get_db_rw
 
 # ═══════════════════════════════════════════════════════════════
 # § 0  IDENTITY & CONSTANTS
@@ -255,13 +256,6 @@ def get_db_ro() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
-
-def get_db_rw() -> sqlite3.Connection:
-    conn = sqlite3.connect(resolve_ssot_path())
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def write_event(conn, event_type, subject, data, source=SOURCE_TAG) -> int:

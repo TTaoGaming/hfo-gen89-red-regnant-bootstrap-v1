@@ -79,6 +79,7 @@ STATE_FILE = HFO_ROOT / ".hfo_daemon_state.json"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from hfo_gemini_models import (
+from hfo_ssot_write import get_db_readwrite
     GEMINI_API_KEY,
     GEMINI_MODELS,
     GeminiRateLimiter,
@@ -97,13 +98,6 @@ from hfo_gemini_models import (
 def get_db_readonly() -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{SSOT_DB}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
-    return conn
-
-def get_db_readwrite() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 def write_stigmergy_event(conn: sqlite3.Connection, event_type: str,

@@ -88,10 +88,10 @@ class Provider(str, Enum):
 ROLE_MAP: Dict[str, Dict[str, str]] = {
     "advisory":   {"provider": Provider.NPU.value,    "model": ""},
     "enricher":   {"provider": Provider.NPU.value,    "model": ""},
-    "analyst":    {"provider": Provider.OLLAMA.value, "model": "gemma3:4b"},
+    "analyst":    {"provider": Provider.OLLAMA.value, "model": "qwen3:8b"},        # upgraded: 8B > 4B, fits in 16GB VRAM
     "researcher": {"provider": Provider.GEMINI.value, "model": "flash_25"},
     "planner":    {"provider": Provider.GEMINI.value, "model": "pro"},
-    "coder":      {"provider": Provider.GEMINI.value, "model": "flash_25"},
+    "coder":      {"provider": Provider.OLLAMA.value, "model": "qwen2.5-coder:7b"}, # local dedicated coder, saves Gemini tokens
     "validator":  {"provider": Provider.GEMINI.value, "model": "pro"},
     "triage":     {"provider": Provider.OLLAMA.value, "model": "qwen2.5:3b"},
     "router":     {"provider": Provider.OLLAMA.value, "model": "qwen2.5:3b"},
@@ -124,7 +124,7 @@ class RouterConfig:
     vram_budget_gb: float = 10.0
     vram_target_pct: float = 80.0   # evict/skip Ollama above this
     ram_target_pct: float = 80.0    # emit HOLD above this
-    cpu_target_pct: float = 80.0
+    cpu_target_pct: float = 60.0    # matches HFO_GOV_CPU_OVER_PCT / orchestrator target
     npu_min_rate_pct: float = 30.0  # underutilisation signal threshold
     evict_idle_after_s: float = 300.0
 

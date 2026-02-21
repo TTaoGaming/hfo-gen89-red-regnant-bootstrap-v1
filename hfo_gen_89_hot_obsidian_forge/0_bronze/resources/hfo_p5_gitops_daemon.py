@@ -34,6 +34,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from hfo_ssot_write import get_db_readwrite as get_db_rw
 
 # Import canonical write
 try:
@@ -82,13 +83,6 @@ ALLOWED_ROOT_FILES = [
 ]
 
 # ─── DATABASE ─────────────────────────────────────────────────────
-def get_db_rw() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(SSOT_DB), timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
-
 # ─── GITOPS LOGIC ─────────────────────────────────────────────────
 class GitOpsDaemon:
     def __init__(self, dry_run: bool = False):

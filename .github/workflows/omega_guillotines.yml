@@ -1,0 +1,28 @@
+name: Omega v13 Orchestrator Guillotines
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  fail-closed-genesis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        
+    - name: Install Dependencies
+      working-directory: hfo_gen_89_hot_obsidian_forge/1_silver/projects/omega_v13_microkernel
+      run: npm install
+      
+    - name: Run Orchestrator Guillotines
+      shell: pwsh
+      run: |
+        ./_scratch/run_gates.ps1

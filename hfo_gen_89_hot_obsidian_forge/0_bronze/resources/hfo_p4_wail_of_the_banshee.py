@@ -106,6 +106,7 @@ import textwrap
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from hfo_ssot_write import get_db_readwrite
 
 # Fix Windows console encoding
 if sys.platform == "win32":
@@ -489,16 +490,6 @@ def format_summary(results: list[CheckResult], grade: str) -> str:
 # ═══════════════════════════════════════════════════════════════
 # § 4  SSOT / STIGMERGY
 # ═══════════════════════════════════════════════════════════════
-
-def get_db_readwrite() -> sqlite3.Connection:
-    if not SSOT_DB.exists():
-        raise FileNotFoundError(f"SSOT database not found: {SSOT_DB}")
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
-
 
 def write_stigmergy_event(
     conn: sqlite3.Connection,

@@ -66,6 +66,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from hfo_ssot_write import get_db_readwrite
 
 # ── Path Resolution ────────────────────────────────────────
 
@@ -786,7 +787,7 @@ def run_bft_consensus():
         "P4": "DISRUPT",  "P5": "IMMUNIZE", "P6": "ASSIMILATE", "P7": "NAVIGATE",
     }
 
-    conn = sqlite3.connect(str(SSOT_DB), timeout=5)
+    conn = sqlite3.connect(str(SSOT_DB), timeout=30)
     conn.row_factory = sqlite3.Row
 
     votes: dict[str, dict[str, Any]] = {}
@@ -914,7 +915,8 @@ def run_bft_consensus():
 
     # ── Write consensus event to SSOT ──
     try:
-        conn_rw = sqlite3.connect(str(SSOT_DB), timeout=10)
+        conn_rw = sqlite3.connect(str(SSOT_DB), timeout=30, isolation_level=None)
+        conn_rw.execute("PRAGMA busy_timeout=30000")
         consensus_data = {
             "quorum": quorum,
             "max_quorum": max_quorum,

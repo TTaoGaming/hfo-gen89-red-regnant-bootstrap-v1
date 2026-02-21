@@ -50,6 +50,7 @@ from datetime import datetime, timezone, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
+from hfo_ssot_write import get_db_readwrite as _get_db_rw
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -174,8 +175,8 @@ _OLLAMA_MODELS = {
         model_id="phi4:14b", model_family="Microsoft Phi",
         params_billions=14.0, provider=ModelProvider.OLLAMA,
         tier=ModelTier.APEX_INTELLIGENCE, vram_gb=9.1,
-        est_tok_per_sec=12.0, supports_thinking=False,
-        notes="Strong reasoning + coding. Current P4 Singer model.",
+        est_tok_per_sec=3.0, supports_thinking=False,
+        notes="Arc140V measured: 3.0 tps. 71.4% quality score. Highest capacity local model. Best for complex reasoning.",
     ),
     "qwen3:30b-a3b": ModelExemplar(
         model_id="qwen3:30b-a3b", model_family="Alibaba Qwen",
@@ -188,64 +189,68 @@ _OLLAMA_MODELS = {
         model_id="deepseek-r1:8b", model_family="DeepSeek",
         params_billions=8.0, provider=ModelProvider.OLLAMA,
         tier=ModelTier.APEX_INTELLIGENCE, vram_gb=5.2,
-        est_tok_per_sec=15.0, supports_thinking=True,
-        notes="Reasoning chain-of-thought. Current P6 Devourer.",
+        est_tok_per_sec=0.0, supports_thinking=True,
+        notes="Arc140V: ALL TIMEOUT at 120s. Thinking model, CoT too long. Unscored. Needs 300s+ timeout or no-think.",
     ),
     "qwen2.5-coder:7b": ModelExemplar(
         model_id="qwen2.5-coder:7b", model_family="Alibaba Qwen",
         params_billions=7.0, provider=ModelProvider.OLLAMA,
-        tier=ModelTier.APEX_SPEED, vram_gb=4.7,
-        est_tok_per_sec=18.0,
-        notes="Code specialist. Chimera evalavg 0.848.",
+        tier=ModelTier.APEX_COST, vram_gb=4.7,
+        est_tok_per_sec=8.0,
+        notes="Arc140V measured: 8.0 tps. 71.4% quality. Code specialist. DOMINATED by qwen2.5:3b (same quality, smaller).",
     ),
     "qwen3:8b": ModelExemplar(
         model_id="qwen3:8b", model_family="Alibaba Qwen",
         params_billions=8.0, provider=ModelProvider.OLLAMA,
-        tier=ModelTier.APEX_SPEED, vram_gb=5.2,
-        est_tok_per_sec=15.0, supports_thinking=True,
-        notes="Balanced 8B with thinking support.",
+        tier=ModelTier.APEX_INTELLIGENCE, vram_gb=5.2,
+        est_tok_per_sec=0.0, supports_thinking=True,
+        notes="Arc140V: ALL TIMEOUT at 120s w/ thinking on. Re-eval needed with /no_think prefix. Expects ~10tps w/o CoT.",
     ),
     "gemma3:12b": ModelExemplar(
         model_id="gemma3:12b", model_family="Google Gemma",
         params_billions=12.0, provider=ModelProvider.OLLAMA,
         tier=ModelTier.APEX_INTELLIGENCE, vram_gb=8.1,
-        est_tok_per_sec=10.0,
-        notes="Large Gemma. Good for analysis.",
+        est_tok_per_sec=4.9,
+        notes="Arc140V measured: 4.9 tps. 71.4% quality. Large Gemma. DOMINATED by phi4:14b on capacity.",
     ),
+    # APEX_SPEED: granite4:3b is empirically fastest quality model (10.1 tps @ 71.4%)
+    # gemma3:4b was mis-tiered as APEX_SPEED — actual measured 6.6 tps, slower than llama3.2/granite4
     "gemma3:4b": ModelExemplar(
         model_id="gemma3:4b", model_family="Google Gemma",
         params_billions=4.0, provider=ModelProvider.OLLAMA,
-        tier=ModelTier.APEX_SPEED, vram_gb=3.3,
-        est_tok_per_sec=25.0,
-        notes="Fast Gemma. Current P2 Shaper model.",
+        tier=ModelTier.APEX_COST, vram_gb=3.3,
+        est_tok_per_sec=6.6,
+        notes="Arc140V measured: 6.6 tps. 71.4% quality. DOMINATED by granite4:3b (faster, smaller). Re-tiered from APEX_SPEED.",
     ),
+    # APEX_SPEED winner: fastest non-thinking model WITH quality (10.1 tps, 71.4%)
     "granite4:3b": ModelExemplar(
         model_id="granite4:3b", model_family="IBM Granite",
         params_billions=3.0, provider=ModelProvider.OLLAMA,
-        tier=ModelTier.APEX_COST, vram_gb=2.1,
-        est_tok_per_sec=30.0,
-        notes="Cheapest/fastest local. Current P0 Watcher.",
+        tier=ModelTier.APEX_SPEED, vram_gb=2.1,
+        est_tok_per_sec=10.1,
+        notes="Arc140V measured: 10.1 tps. 71.4% quality. PARETO OPTIMAL: fastest model with full quality. Re-tiered from APEX_COST.",
     ),
     "llama3.2:3b": ModelExemplar(
         model_id="llama3.2:3b", model_family="Meta Llama",
         params_billions=3.0, provider=ModelProvider.OLLAMA,
         tier=ModelTier.APEX_COST, vram_gb=2.0,
-        est_tok_per_sec=30.0,
-        notes="Meta Llama small. Solid general-purpose.",
+        est_tok_per_sec=13.5,
+        notes="Arc140V measured: 13.5 tps. 50% quality (fails BLUF). Fastest non-thinking model overall but lower quality vs granite4:3b.",
     ),
+    # APEX_EFFICIENCY: best quality/GB ratio (37.6%/GB)
     "qwen2.5:3b": ModelExemplar(
         model_id="qwen2.5:3b", model_family="Alibaba Qwen",
         params_billions=3.0, provider=ModelProvider.OLLAMA,
         tier=ModelTier.APEX_COST, vram_gb=1.9,
-        est_tok_per_sec=35.0,
-        notes="Cheapest Qwen. Current P6 Kraken aux.",
+        est_tok_per_sec=9.3,
+        notes="Arc140V measured: 9.3 tps. 71.4% quality. PARETO OPTIMAL: best quality/GB (37.6%/GB). Primary GPU inference model.",
     ),
     "lfm2.5-thinking:1.2b": ModelExemplar(
         model_id="lfm2.5-thinking:1.2b", model_family="Liquid AI",
         params_billions=1.2, provider=ModelProvider.OLLAMA,
         tier=ModelTier.APEX_COST, vram_gb=0.7,
-        est_tok_per_sec=50.0, supports_thinking=True,
-        notes="Ultra-compact thinker. Current P3 Injector.",
+        est_tok_per_sec=25.2, supports_thinking=True,
+        notes="Arc140V measured: 25.2 tps avg (39 tps raw CoT). GPU warm-up model. 0% scored quality (responses in think tags). Needs think-stripped scoring.",
     ),
 }
 
@@ -595,13 +600,6 @@ def _get_db_ro() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
-
-def _get_db_rw() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def compute_pheromone_scores(hours_back: float = 24.0) -> list[PheromoneScore]:

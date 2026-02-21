@@ -99,6 +99,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from hfo_ssot_write import get_db_readwrite as get_db_rw
 
 # ═══════════════════════════════════════════════════════════════
 # § 0  PATH RESOLUTION (PAL)
@@ -169,13 +170,6 @@ FORBIDDEN_PATTERNS = [
 # ═══════════════════════════════════════════════════════════════
 # § 1  DATABASE & CLOUDEVENT HELPERS
 # ═══════════════════════════════════════════════════════════════
-
-def get_db_rw() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 def get_db_ro() -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{SSOT_DB}?mode=ro", uri=True)

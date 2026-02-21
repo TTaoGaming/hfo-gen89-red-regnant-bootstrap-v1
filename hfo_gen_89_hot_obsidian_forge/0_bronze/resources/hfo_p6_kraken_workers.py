@@ -38,6 +38,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
+from hfo_ssot_write import get_db_readwrite
 
 if TYPE_CHECKING:
     from hfo_resource_monitor import SwarmOrchestrator
@@ -60,13 +61,6 @@ SSOT_DB = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "2_gold" / "resources" / 
 GEN = os.environ.get("HFO_GENERATION", "89")
 P6_SOURCE = f"hfo_p6_kraken_swarm_gen{GEN}"
 
-
-def get_db_readwrite() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def get_db_readonly() -> sqlite3.Connection:

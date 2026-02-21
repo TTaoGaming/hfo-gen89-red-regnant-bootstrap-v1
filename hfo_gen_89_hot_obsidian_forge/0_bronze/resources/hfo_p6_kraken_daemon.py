@@ -80,6 +80,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+from hfo_ssot_write import get_db_readwrite
 
 # Resource governor — hard 80% GPU ceiling for background daemons
 # Optional import: governor works standalone, daemon works without it
@@ -196,13 +197,6 @@ def get_db_readonly() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
-
-def get_db_readwrite() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(SSOT_DB), timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
 
 
 def write_stigmergy_event(
