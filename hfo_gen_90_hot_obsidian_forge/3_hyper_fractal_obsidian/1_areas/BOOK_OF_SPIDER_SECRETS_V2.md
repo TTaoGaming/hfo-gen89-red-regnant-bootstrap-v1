@@ -51,10 +51,10 @@ The server tracks the phase of each agent session. If an agent attempts to `Exec
 
 ### B. The HIVE8 Loop (Tactical Execution)
 The `hfo_hive8_mcp_server.py` enforces the 4-beat tactical loop at the file/line/test level:
-*   **H**unt (P0+P1) - Locate target files and map dependencies.
-*   **I**ntervene (P2+P4) - Write code and break existing structure.
-*   **V**erify (P5+P6) - Run tests and learn from failures (Hard Gate: Must PASS to proceed).
-*   **E**mit (P3+P7) - Deliver payload and steer back to the strategic PREY8 loop.
+*   **H**indsight (P0+P1) - Locate target files and map dependencies.
+*   **I**nsight (P2+P4) - Write code and break existing structure.
+*   **V**alidated Foresight (P5+P6) - Run tests and learn from failures (Hard Gate: Must PASS to proceed).
+*   **E**volve (P3+P7) - Deliver payload and steer back to the strategic PREY8 loop.
 
 While PREY8 decides *what* to do and *why* (Strategic), HIVE8 decides *how* to do it safely (Tactical). Both use identical structural enforcement physics (hash chains, state machines, fail-closed gates).
 
