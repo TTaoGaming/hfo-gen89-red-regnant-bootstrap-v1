@@ -53,7 +53,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, cast
+from typing import Optional, Any, cast, Dict, List, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
