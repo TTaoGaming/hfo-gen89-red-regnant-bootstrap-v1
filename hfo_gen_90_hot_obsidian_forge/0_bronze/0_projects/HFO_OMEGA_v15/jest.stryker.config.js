@@ -35,5 +35,7 @@ module.exports = {
   testMatch: [
     "**/test_kalman_filter.test.ts",
     "**/test_event_bus.test.ts",
+    "**/test_plugin_supervisor.ts",
+    "**/event_bus.spec.ts",
   ],
 };

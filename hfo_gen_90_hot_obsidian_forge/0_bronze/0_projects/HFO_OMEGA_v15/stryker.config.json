@@ -13,8 +13,7 @@
     "enableFindRelatedTests": true
   },
   "mutate": [
-    "audio_engine_plugin.ts",
-    "symbiote_injector_plugin.ts"
+    "plugin_supervisor.ts"
   ],
   "thresholds": {
     "high": 90,
