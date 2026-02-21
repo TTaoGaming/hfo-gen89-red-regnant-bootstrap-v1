@@ -43,6 +43,61 @@ def tmp_db(tmp_path: Path):
 
 
 @pytest.fixture
+def tmp_db_full(tmp_path: Path):
+    """Full-schema SSOT SQLite matching production stigmergy_events.
+
+    Adds:
+      - ``source`` column (required by real schema)
+      - ``enforce_signal_metadata`` BEFORE INSERT trigger (mirrors production)
+
+    Use this for tests that exercise hfo_ssot_write helpers directly or
+    need realistic insert validation.
+    """
+    db = tmp_path / "test_ssot_full.sqlite"
+    conn = sqlite3.connect(str(db))
+    conn.executescript("""
+        PRAGMA journal_mode=WAL;
+        PRAGMA busy_timeout=30000;
+
+        CREATE TABLE IF NOT EXISTS stigmergy_events (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type    TEXT NOT NULL,
+            source        TEXT,
+            timestamp     TEXT NOT NULL,
+            subject       TEXT,
+            data_json     TEXT,
+            content_hash  TEXT UNIQUE
+        );
+
+        -- Mirror of the production enforce_signal_metadata BEFORE INSERT trigger.
+        -- Exempt prefixes: hfo.gen89.prey8.*, hfo.gen89.mission.*, hfo.gen89.chimera.*,
+        --                  hfo.gen88.*, system_health*, hfo.gen89.ssot_write.gate_block*
+        CREATE TRIGGER IF NOT EXISTS enforce_signal_metadata
+        BEFORE INSERT ON stigmergy_events
+        BEGIN
+            SELECT CASE
+                WHEN (
+                    NEW.event_type NOT LIKE 'hfo.gen89.prey8.%'
+                    AND NEW.event_type NOT LIKE 'hfo.gen89.mission.%'
+                    AND NEW.event_type NOT LIKE 'hfo.gen89.chimera.%'
+                    AND NEW.event_type NOT LIKE 'hfo.gen88.%'
+                    AND NEW.event_type NOT LIKE 'system_health%'
+                    AND NEW.event_type NOT LIKE 'hfo.gen89.ssot_write.gate_block%'
+                    AND (
+                        NEW.data_json IS NULL
+                        OR json_extract(NEW.data_json, '$.signal_metadata') IS NULL
+                    )
+                )
+                THEN RAISE(ABORT, 'signal_metadata required in data_json for this event_type')
+            END;
+        END;
+    """)
+    conn.commit()
+    conn.close()
+    return db
+
+
+@pytest.fixture
 def tmp_status_file(tmp_path: Path):
     """Empty resource status JSON file."""
     f = tmp_path / ".hfo_resource_status.json"
