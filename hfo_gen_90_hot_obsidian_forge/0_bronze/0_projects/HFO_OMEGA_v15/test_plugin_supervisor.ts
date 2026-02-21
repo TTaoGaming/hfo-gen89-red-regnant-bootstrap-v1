@@ -591,225 +591,196 @@ describe('LifecycleGateError — method name embedded in message', () => {
 
 });
 
-// ─── Mutation-killing: destroyAll DESTROYED guard ────────────────────────────
-// Kills: ConditionalExpression if(false), StringLiteral 'DESTROYED'→'',
-//        BlockStatement guard body (removes return), StringLiteral in warn msg
+// ─── Hard behavioral: destroyAll DESTROYED guard (idempotency + skip) ────────
+// Kills: ConditionalExpression if(false) and StringLiteral 'DESTROYED'→''
+// The log-message string inside the guard is INTENTIONALLY NOT tested — those
+// are implementation-detail StringLiteral mutants we allow to survive (goldilocks).
 
-describe('PluginSupervisor — destroyAll DESTROYED guard (console.warn)', () => {
+describe('PluginSupervisor — destroyAll DESTROYED guard (behavioral)', () => {
 
-    it('Given state=DESTROYED, When destroyAll called again, Then console.warn is invoked', async () => {
+    it('Given state=DESTROYED, When destroyAll called again, Then getState() still returns DESTROYED', async () => {
         const sup = new PluginSupervisor();
         await sup.destroyAll();
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        await sup.destroyAll();
-        expect(warnSpy).toHaveBeenCalled();
-        warnSpy.mockRestore();
+        await sup.destroyAll(); // second call
+        expect(sup.getState()).toBe('DESTROYED');
     });
 
-    it('Given state=DESTROYED, When destroyAll called again, Then warn message references "DESTROYED"', async () => {
+    it('Given plugin destroyed once, When destroyAll called twice, Then plugin.destroy NOT called on second call', async () => {
         const sup = new PluginSupervisor();
+        const p = new MockPlugin('P');
+        sup.registerPlugin(p);
+        await sup.initAll(); await sup.startAll(); await sup.stopAll();
         await sup.destroyAll();
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const countAfterFirst = p.destroyCalled;
         await sup.destroyAll();
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/DESTROYED/));
-        warnSpy.mockRestore();
+        // Count must NOT increase — the guard must short-circuit
+        expect(p.destroyCalled).toBe(countAfterFirst);
     });
 
 });
 
-// ─── Mutation-killing: PAL conditional (if(true) survivor) ───────────────────
-// Kills: ConditionalExpression registry.has(key) → true
+// ─── Hard behavioral: PAL conditional (registry.has guard) ──────────────────
+// Tests the BEHAVIOR of the guard (overwrite semantics), not the log string.
 
-describe('PathAbstractionLayer — no-warn on first registration', () => {
+describe('PathAbstractionLayer — overwrite guard contract', () => {
 
-    it('Given fresh PAL, When a key is registered for the first time, Then console.warn is NOT called', () => {
+    it('Given a key registered once, When registered again with a different value, Then resolve returns second value', () => {
         const pal = new PathAbstractionLayer();
-        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        pal.register('BrandNewKey', 'value');
-        expect(warnSpy).not.toHaveBeenCalled();
-        warnSpy.mockRestore();
+        pal.register('K', 'first');
+        pal.register('K', 'second');
+        expect(pal.resolve<string>('K')).toBe('second');
+    });
+
+    it('Given a key NOT previously registered, When registered, Then resolve immediately returns it', () => {
+        const pal = new PathAbstractionLayer();
+        pal.register('Fresh', { x: 1 });
+        expect(pal.resolve<{ x: number }>('Fresh')).toEqual({ x: 1 });
+    });
+
+    it('Given two different keys, When both registered, Then each resolves independently', () => {
+        const pal = new PathAbstractionLayer();
+        pal.register('A', 100);
+        pal.register('B', 200);
+        expect(pal.resolve<number>('A')).toBe(100);
+        expect(pal.resolve<number>('B')).toBe(200);
     });
 
 });
 
-// ─── Mutation-killing: catch-body BlockStatements + console.log/error ────────
-// Kills: BlockStatement {} survivors in stopAll + destroyAll catch clauses
-//        StringLiteral "" for "Registered plugin:" log
-//        StringLiteral "" for "Initialized:" log
-//        StringLiteral "" for "Started:" log
-//        StringLiteral "" for "Stopped:" log
-//        StringLiteral "" for "Destroyed:" log
+// ─── Hard behavioral: fail-closed semantics in initAll + startAll ─────────────
+// Tests WHAT gets skipped when a throw occurs — not the log messages.
 
-describe('PluginSupervisor — lifecycle console logging', () => {
+describe('PluginSupervisor — fail-closed ordering contract', () => {
 
-    it('Given plugin registered, When registerPlugin called, Then console.log includes plugin name', () => {
+    it('Given [Good, Bad] registration order, When initAll throws on Bad, Then Good was initialized but Bad was not', async () => {
         const sup = new PluginSupervisor();
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        sup.registerPlugin(new MockPlugin('MyPlugin'));
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/MyPlugin/));
-        logSpy.mockRestore();
-    });
-
-    it('Given plugin initialized, When initAll completes, Then console.log includes "Initialized" and plugin name', async () => {
-        const sup = new PluginSupervisor();
-        sup.registerPlugin(new MockPlugin('PlugA'));
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        await sup.initAll();
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Initialized.*PlugA|PlugA.*Initialized/));
-        logSpy.mockRestore();
-    });
-
-    it('Given plugin started, When startAll completes, Then console.log includes "Started" and plugin name', async () => {
-        const sup = new PluginSupervisor();
-        sup.registerPlugin(new MockPlugin('PlugB'));
-        await sup.initAll();
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        await sup.startAll();
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Started.*PlugB|PlugB.*Started/));
-        logSpy.mockRestore();
-    });
-
-    it('Given plugin stopped, When stopAll completes, Then console.log includes "Stopped" and plugin name', async () => {
-        const sup = new PluginSupervisor();
-        sup.registerPlugin(new MockPlugin('PlugC'));
-        await sup.initAll(); await sup.startAll();
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        await sup.stopAll();
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Stopped.*PlugC|PlugC.*Stopped/));
-        logSpy.mockRestore();
-    });
-
-    it('Given plugin destroyed, When destroyAll completes, Then console.log includes "Destroyed" and plugin name', async () => {
-        const sup = new PluginSupervisor();
-        sup.registerPlugin(new MockPlugin('PlugD'));
-        await sup.initAll(); await sup.startAll(); await sup.stopAll();
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        await sup.destroyAll();
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Destroyed.*PlugD|PlugD.*Destroyed/));
-        logSpy.mockRestore();
-    });
-
-});
-
-describe('PluginSupervisor — error logging in catch blocks', () => {
-
-    it('Given plugin throws in stop, When stopAll runs, Then console.error is called with plugin name', async () => {
-        const sup = new PluginSupervisor();
-        const throwing = new MockPlugin('BadStopper');
-        throwing.shouldThrowOnStop = true;
-        sup.registerPlugin(throwing);
-        await sup.initAll(); await sup.startAll();
-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        await sup.stopAll();
-        expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/BadStopper/), expect.anything());
-        errorSpy.mockRestore();
-    });
-
-    it('Given plugin throws in stop, When stopAll runs, Then error message includes "Failed"', async () => {
-        const sup = new PluginSupervisor();
-        const throwing = new MockPlugin('BadStopper2');
-        throwing.shouldThrowOnStop = true;
-        sup.registerPlugin(throwing);
-        await sup.initAll(); await sup.startAll();
-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        await sup.stopAll();
-        expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/[Ff]ailed/), expect.anything());
-        errorSpy.mockRestore();
-    });
-
-    it('Given plugin throws in destroy, When destroyAll runs, Then console.error is called with plugin name', async () => {
-        const sup = new PluginSupervisor();
-        const throwing = new MockPlugin('BadDestroyer');
-        throwing.shouldThrowOnDestroy = true;
-        sup.registerPlugin(throwing);
-        await sup.initAll();
-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        await sup.destroyAll();
-        expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/BadDestroyer/), expect.anything());
-        errorSpy.mockRestore();
-    });
-
-    it('Given plugin throws in destroy, When destroyAll runs, Then error message includes "Failed"', async () => {
-        const sup = new PluginSupervisor();
-        const throwing = new MockPlugin('BadDestroyer2');
-        throwing.shouldThrowOnDestroy = true;
-        sup.registerPlugin(throwing);
-        await sup.initAll();
-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        await sup.destroyAll();
-        expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/[Ff]ailed/), expect.anything());
-        errorSpy.mockRestore();
-    });
-
-    it('Given plugin throws in init, When initAll runs, Then console.error is called for the failure', async () => {
-        const sup = new PluginSupervisor();
-        const throwing = new MockPlugin('BadInitter');
-        throwing.shouldThrowOnInit = true;
-        sup.registerPlugin(throwing);
-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const good = new MockPlugin('Good');
+        const bad = new MockPlugin('Bad');
+        bad.shouldThrowOnInit = true;
+        sup.registerPlugin(good);
+        sup.registerPlugin(bad);
         try { await sup.initAll(); } catch { /* expected */ }
-        expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/BadInitter/), expect.anything());
-        errorSpy.mockRestore();
+        expect(good.initCalled).toBe(1);  // ran before Bad
+        expect(bad.initCalled).toBe(1);   // attempted, threw
     });
 
-    it('Given plugin throws in start, When startAll runs, Then console.error is called for the failure', async () => {
+    it('Given [Bad, Good] registration order, When initAll throws on Bad, Then Good.init is NEVER called (fail-closed)', async () => {
         const sup = new PluginSupervisor();
-        const throwing = new MockPlugin('BadStarter');
-        throwing.shouldThrowOnStart = true;
-        sup.registerPlugin(throwing);
+        const bad = new MockPlugin('Bad');
+        const good = new MockPlugin('Good');
+        bad.shouldThrowOnInit = true;
+        sup.registerPlugin(bad);  // Bad first
+        sup.registerPlugin(good); // Good after
+        try { await sup.initAll(); } catch { /* expected */ }
+        expect(bad.initCalled).toBe(1);   // attempted, threw
+        expect(good.initCalled).toBe(0);  // never reached — fail-closed
+    });
+
+    it('Given [Bad, Good] registration order, When startAll throws on Bad, Then Good.start is NEVER called (fail-closed)', async () => {
+        const sup = new PluginSupervisor();
+        const bad = new MockPlugin('Bad');
+        const good = new MockPlugin('Good');
+        bad.shouldThrowOnStart = true;
+        sup.registerPlugin(bad);
+        sup.registerPlugin(good);
         await sup.initAll();
-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         try { await sup.startAll(); } catch { /* expected */ }
-        expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/BadStarter/), expect.anything());
-        errorSpy.mockRestore();
+        expect(good.startCalled).toBe(0); // never reached
     });
 
 });
 
-// ─── Mutation-killing: pre-loop progress logs ─────────────────────────────────
-// Kills: StringLiteral "" survivors for "Initializing/Starting/Stopping/Destroying N plugins..."
+// ─── Hard behavioral: emergency teardown (RUNNING → destroyAll skips stop) ────
 
-describe('PluginSupervisor — pre-loop progress logging', () => {
+describe('PluginSupervisor — emergency teardown from RUNNING', () => {
 
-    it('Given plugins, When initAll runs, Then console.log includes "Initializing N plugins"', async () => {
+    it('Given state=RUNNING, When destroyAll called directly, Then plugin.stop is NOT called', async () => {
         const sup = new PluginSupervisor();
-        sup.registerPlugin(new MockPlugin('P'));
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        await sup.initAll();
-        // Must match the COUNT-based pre-loop message, not the per-plugin "Initialized: P" log
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Initializing \d+ plugin/));
-        logSpy.mockRestore();
-    });
-
-    it('Given plugins, When startAll runs, Then console.log includes "Starting"', async () => {
-        const sup = new PluginSupervisor();
-        sup.registerPlugin(new MockPlugin('P'));
-        await sup.initAll();
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        await sup.startAll();
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/[Ss]tarting/));
-        logSpy.mockRestore();
-    });
-
-    it('Given plugins, When stopAll runs, Then console.log includes "Stopping"', async () => {
-        const sup = new PluginSupervisor();
-        sup.registerPlugin(new MockPlugin('P'));
+        const p = new MockPlugin('P');
+        sup.registerPlugin(p);
         await sup.initAll(); await sup.startAll();
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        await sup.stopAll();
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/[Ss]topping/));
-        logSpy.mockRestore();
+        await sup.destroyAll(); // bypass stopAll
+        expect(p.stopCalled).toBe(0); // stop must NOT have been called
     });
 
-    it('Given plugins, When destroyAll runs, Then console.log includes "Destroying N plugins"', async () => {
+    it('Given state=RUNNING, When destroyAll called, Then plugin.destroy IS called once', async () => {
+        const sup = new PluginSupervisor();
+        const p = new MockPlugin('P');
+        sup.registerPlugin(p);
+        await sup.initAll(); await sup.startAll();
+        await sup.destroyAll();
+        expect(p.destroyCalled).toBe(1);
+    });
+
+    it('Given state=CREATED (never initialized), When destroyAll called, Then plugin.destroy IS called', async () => {
+        const sup = new PluginSupervisor();
+        const p = new MockPlugin('P');
+        sup.registerPlugin(p);
+        await sup.destroyAll(); // cold teardown
+        expect(p.destroyCalled).toBe(1);
+    });
+
+});
+
+// ─── Hard behavioral: full multi-cycle restart ───────────────────────────────
+
+describe('PluginSupervisor — multi-cycle restart correctness', () => {
+
+    it('Given two full start→stop→restart cycles, When completed, Then state=RUNNING', async () => {
         const sup = new PluginSupervisor();
         sup.registerPlugin(new MockPlugin('P'));
-        await sup.initAll(); await sup.startAll(); await sup.stopAll();
-        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-        await sup.destroyAll();
-        // Must match the COUNT-based pre-loop message, not the per-plugin "Destroyed: P" log
-        expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/Destroying \d+ plugin/));
-        logSpy.mockRestore();
+        await sup.initAll();
+        await sup.startAll(); await sup.stopAll(); // cycle 1
+        await sup.startAll(); await sup.stopAll(); // cycle 2
+        await sup.startAll();
+        expect(sup.getState()).toBe('RUNNING');
+    });
+
+    it('Given two restart cycles, When completed, Then plugin.start count matches cycle count', async () => {
+        const sup = new PluginSupervisor();
+        const p = new MockPlugin('P');
+        sup.registerPlugin(p);
+        await sup.initAll();
+        await sup.startAll(); await sup.stopAll();
+        await sup.startAll(); await sup.stopAll();
+        await sup.startAll();
+        expect(p.startCalled).toBe(3); // exactly 3 starts, not 1 or 0
+    });
+
+    it('Given two restart cycles, When completed, Then plugin.init count is exactly 1 (init is not repeated)', async () => {
+        const sup = new PluginSupervisor();
+        const p = new MockPlugin('P');
+        sup.registerPlugin(p);
+        await sup.initAll();
+        await sup.startAll(); await sup.stopAll();
+        await sup.startAll(); await sup.stopAll();
+        expect(p.initCalled).toBe(1);
+    });
+
+});
+
+// ─── Hard behavioral: EventBus identity across plugins ───────────────────────
+
+describe('PluginSupervisor — EventBus identity contract', () => {
+
+    it('Given two plugins, When both initialized, Then both receive the same EventBus reference', async () => {
+        const sup = new PluginSupervisor();
+        const p1 = new MockPlugin('P1');
+        const p2 = new MockPlugin('P2');
+        sup.registerPlugin(p1); sup.registerPlugin(p2);
+        await sup.initAll();
+        expect(p1.receivedContext!.eventBus).toBe(p2.receivedContext!.eventBus);
+    });
+
+    it('Given external EventBus injected, When plugins initialized, Then all receive the injected instance', async () => {
+        const externalBus = new EventBus();
+        const sup = new PluginSupervisor(externalBus);
+        const p1 = new MockPlugin('P1');
+        const p2 = new MockPlugin('P2');
+        sup.registerPlugin(p1); sup.registerPlugin(p2);
+        await sup.initAll();
+        expect(p1.receivedContext!.eventBus).toBe(externalBus);
+        expect(p2.receivedContext!.eventBus).toBe(externalBus);
     });
 
 });
