@@ -50,6 +50,8 @@ import secrets
 import sqlite3
 import subprocess
 import sys
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -195,7 +197,7 @@ AGENT_REGISTRY = {
 }
 
 
-def _new_session() -> dict:
+def _new_session() -> dict[str, Any]:
     """Create a fresh per-agent session state dict."""
     return {
         "session_id": None,
@@ -211,10 +213,10 @@ def _new_session() -> dict:
 
 
 # Per-agent session state (keyed by agent_id)
-_sessions: dict[str, dict] = {}
+_sessions: dict[str, dict[str, Any]] = {}
 
 
-def _get_session(agent_id: str) -> dict:
+def _get_session(agent_id: str) -> dict[str, Any]:
     """Get or create a session for the given agent. No authorization check here."""
     if agent_id not in _sessions:
         _sessions[agent_id] = _new_session()
@@ -222,7 +224,7 @@ def _get_session(agent_id: str) -> dict:
     return _sessions[agent_id]
 
 
-def _validate_agent(agent_id: str, gate_name: str = None) -> Optional[dict]:
+def _validate_agent(agent_id: str, gate_name: Optional[str] = None) -> Optional[dict[str, Any]]:
     """
     Deny-by-default agent authorization.
     Returns None if agent is authorized, or a GATE_BLOCKED dict if not.
@@ -376,7 +378,7 @@ def _split_csv(s: str) -> list:
 # Database
 # ---------------------------------------------------------------------------
 
-def _get_conn():
+def _get_conn() -> sqlite3.Connection:
     if not DB_PATH.exists():
         raise FileNotFoundError(f"SSOT database not found at {DB_PATH}")
     conn = sqlite3.connect(str(DB_PATH), timeout=10)
@@ -386,8 +388,8 @@ def _get_conn():
     return conn
 
 
-def _cloudevent(event_type: str, data: dict, subject: str = "prey8",
-                agent_id: str = "") -> dict:
+def _cloudevent(event_type: str, data: dict[str, Any], subject: str = "prey8",
+                agent_id: str = "") -> dict[str, Any]:
     """Build a CloudEvent 1.0 envelope with signature and agent identity."""
     trace_id, span_id = _trace_ids()
     ts = _now_iso()
@@ -416,7 +418,7 @@ def _cloudevent(event_type: str, data: dict, subject: str = "prey8",
     return event
 
 
-def _write_stigmergy(event: dict) -> int:
+def _write_stigmergy(event: dict[str, Any]) -> int:
     """Write a CloudEvent to stigmergy_events. Returns row id."""
     try:
         from hfo_ssot_write import write_stigmergy_event, build_signal_metadata
@@ -492,7 +494,7 @@ def _save_session(agent_id: str):
         pass  # Non-fatal: disk persistence is best-effort
 
 
-def _load_session(agent_id: str) -> dict:
+def _load_session(agent_id: str) -> Optional[dict[str, Any]]:
     """Load per-agent session state from disk. Returns the loaded state or None."""
     path = _session_state_path(agent_id)
     if not path.exists():
@@ -511,7 +513,7 @@ def _load_session(agent_id: str) -> dict:
         return None
 
 
-def _clear_session_file(agent_id: str):
+def _clear_session_file(agent_id: str) -> None:
     """Remove per-agent persisted session state (after yield or memory loss recording)."""
     try:
         path = _session_state_path(agent_id)
@@ -528,7 +530,7 @@ def _clear_session_file(agent_id: str):
 # Memory Loss Detection & Tracking
 # ---------------------------------------------------------------------------
 
-def _detect_memory_loss() -> list:
+def _detect_memory_loss() -> list[dict[str, Any]]:
     """
     Check SSOT for unclosed PREY8 sessions (perceive without matching yield).
     Returns list of orphaned sessions with diagnostic data.
@@ -590,7 +592,7 @@ def _detect_memory_loss() -> list:
     return orphans
 
 
-def _record_memory_loss(orphan_data: dict, recovery_source: str, agent_id: str = "unknown"):
+def _record_memory_loss(orphan_data: dict[str, Any], recovery_source: str, agent_id: str = "unknown") -> None:
     """Write a memory_loss CloudEvent to SSOT."""
     event_data = {
         "loss_type": "session_state_reset",
@@ -622,7 +624,7 @@ def _record_memory_loss(orphan_data: dict, recovery_source: str, agent_id: str =
     return row_id
 
 
-def _check_and_recover_session(agent_id: str):
+def _check_and_recover_session(agent_id: str) -> Optional[int]:
     """
     On server start / perceive: check for prior session state on disk for this agent.
     If found with unclosed session, record memory loss and clean up.
@@ -691,9 +693,9 @@ GATE_SPECS = {
         "port_pair": "P2_SHAPE + P4_DISRUPT",
         "required_fields": [
             "sbe_given", "sbe_when", "sbe_then",
-            "artifacts", "p4_adversarial_check", "fail_closed_gate",
+            "artifacts", "p4_adversarial_check", "sbe_test_file",
         ],
-        "description": "Must supply SBE spec (P2), artifacts, adversarial check (P4), and explicit gate pass",
+        "description": "Must supply SBE spec (P2), artifacts, adversarial check (P4), and an executable test file",
     },
     "YIELD": {
         "port_pair": "P3_INJECT + P5_IMMUNIZE",
@@ -709,7 +711,7 @@ GATE_SPECS = {
 
 def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") -> tuple[bool, str]:
     """
-    Run CI/CD fast checks (e.g., pytest, syntax checks) to ensure CORRECT-BY-CONSTRUCTION genesis.
+    Run CI/CD fast checks (e.g., pytest, syntax checks, mypy, ruff) to ensure CORRECT-BY-CONSTRUCTION genesis.
     Returns (passed, output_string).
     """
     root_dir = _find_root()
@@ -738,7 +740,45 @@ def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") 
                 passed = False
                 output.append(f"Failed to syntax check {py_file}: {str(e)}")
 
-    # 2. Run pytest in the workspace root
+    # 2. Run ruff check on modified/created Python files
+    for py_file in py_files:
+        file_path = root_dir / py_file
+        if file_path.exists():
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "ruff", "check", str(file_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    stdin=subprocess.DEVNULL
+                )
+                if result.returncode != 0:
+                    passed = False
+                    output.append(f"Ruff linting failed in {py_file}:\n{result.stdout}\n{result.stderr}")
+            except Exception as e:
+                passed = False
+                output.append(f"Failed to run ruff on {py_file}: {str(e)}")
+
+    # 3. Run mypy --strict on modified/created Python files
+    for py_file in py_files:
+        file_path = root_dir / py_file
+        if file_path.exists():
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "mypy", "--strict", str(file_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    stdin=subprocess.DEVNULL
+                )
+                if result.returncode != 0:
+                    passed = False
+                    output.append(f"Mypy strict type check failed in {py_file}:\n{result.stdout}\n{result.stderr}")
+            except Exception as e:
+                passed = False
+                output.append(f"Failed to run mypy on {py_file}: {str(e)}")
+
+    # 4. Run pytest in the workspace root
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "--maxfail=1", "--disable-warnings", "-q"],
@@ -760,50 +800,46 @@ def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") 
     else:
         return False, "\n\n".join(output)
 
-import urllib.request
-import urllib.error
+import re
 
 def _semantic_anti_slop_check(text: str) -> bool:
     """
-    Idea 1: Semantic Anti-Slop Validation.
-    Uses Gemini API if available, otherwise falls back to entropy/length heuristics.
+    Idea 1: Semantic Anti-Slop Validation (Pattern Matching).
+    Strict heuristic checks to prevent fail-open network issues.
     """
-    if not text or len(text.strip()) < 10:
+    if not text or not isinstance(text, str):
         return False
         
-    # Fallback heuristic: check for repeated characters or too few unique words
-    words = text.strip().split()
-    unique_words = set(words)
-    if len(unique_words) < len(words) * 0.3 and len(words) > 10:
-        return False # Too much repetition
+    text = text.strip()
+    if len(text) < 20:
+        return False
         
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return True # Pass if no API key
+    words = text.split()
+    if len(words) < 5:
+        return False
         
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-        payload = {
-            "contents": [{
-                "parts": [{"text": f"Analyze this text for 'slop' (low effort, meaningless filler, or hallucinated placeholder text like 'test plan', 'did the thing', 'asdf'). Reply ONLY with 'VALID' if it contains actual semantic meaning, or 'SLOP' if it is low-effort filler.\n\nText: {text}"}]
-            }],
-            "generationConfig": {
-                "temperature": 0.0,
-                "maxOutputTokens": 5
-            }
-        }
-        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=3) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
-            reply = res_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-            if "SLOP" in reply.upper():
-                return False
-    except Exception:
-        pass # Fail open on network error
+    # Check for repeated characters or too few unique words
+    unique_words = set(w.lower() for w in words)
+    if len(unique_words) < len(words) * 0.4 and len(words) > 10:
+        return False # Too much repetition (e.g., "asdf asdf asdf")
+        
+    # Check for common slop phrases
+    slop_phrases = [
+        r"^test plan$", r"^did the thing$", r"^asdf", r"^update$", r"^fix$",
+        r"^wip$", r"^placeholder$", r"^todo$"
+    ]
+    for phrase in slop_phrases:
+        if re.search(phrase, text, re.IGNORECASE):
+            return False
+            
+    # Basic structural heuristic: must contain spaces and varied word lengths
+    word_lengths = set(len(w) for w in words)
+    if len(word_lengths) < 3 and len(words) > 5:
+        return False # e.g., "a a a a a a" or "test test test"
         
     return True
 
-def _validate_gate(gate_name: str, fields: dict, agent_id: str = "") -> Optional[dict]:
+def _validate_gate(gate_name: str, fields: dict[str, Any], agent_id: str = "") -> Optional[dict[str, Any]]:
     """
     Validate that all required gate fields are non-empty.
     Returns None if valid, or a GATE_BLOCKED error dict if invalid.
@@ -894,6 +930,7 @@ def prey8_perceive(
     observations: str,
     memory_refs: str,
     stigmergy_digest: str,
+    web_search_query: str = "",
 ) -> dict:
     """
     P -- PERCEIVE: Start a PREY8 session. First tile in the mosaic.
@@ -916,12 +953,16 @@ def prey8_perceive(
     - Queries SSOT for context stats
     - Reads recent yields (swarm continuity)
     - Runs FTS5 search for the probe
+    - P0 OBSERVE: Safe web search (if web_search_query provided)
+    - P6 ASSIMILATE: Fetches recent stigmergy rollups
 
     Args:
+        agent_id: The ID of the agent calling this tool.
         probe: The user's intent or question for this session.
         observations: Comma-separated observations from P0 OBSERVE sensing.
         memory_refs: Comma-separated document IDs consumed from P6 ASSIMILATE.
         stigmergy_digest: Summary of recent stigmergy signals consumed.
+        web_search_query: Optional query for safe web search (P0 OBSERVE).
 
     Returns:
         dict with: nonce, chain_hash, session_id, gate_receipt, context
@@ -1051,6 +1092,55 @@ def prey8_perceive(
                 except sqlite3.OperationalError:
                     pass
 
+        # P0 OBSERVE: Safe Web Search
+        web_results = []
+        if web_search_query and len(web_search_query.strip()) > 2:
+            try:
+                from duckduckgo_search import DDGS
+                with DDGS() as ddgs:
+                    results = ddgs.text(web_search_query, max_results=4, safesearch='moderate')
+                    web_results = list(results)
+            except Exception as e:
+                web_results = [{"error": f"Web search failed: {str(e)}"}]
+
+        # P6 ASSIMILATE: Recent Stigmergy Rollups (Time Ladder: Hour/Day/Week/Month)
+        recent_rollups = []
+        try:
+            # 1. Try to fetch the ladder explicitly
+            ladder_queries = [
+                "SELECT id, title, bluf, timestamp FROM documents WHERE doc_type = 'rollup' AND title LIKE '%Hourly%' ORDER BY timestamp DESC LIMIT 1",
+                "SELECT id, title, bluf, timestamp FROM documents WHERE doc_type = 'rollup' AND title LIKE '%Daily%' ORDER BY timestamp DESC LIMIT 1",
+                "SELECT id, title, bluf, timestamp FROM documents WHERE doc_type = 'rollup' AND title LIKE '%Weekly%' ORDER BY timestamp DESC LIMIT 1",
+                "SELECT id, title, bluf, timestamp FROM documents WHERE doc_type = 'rollup' AND title LIKE '%Monthly%' ORDER BY timestamp DESC LIMIT 1"
+            ]
+            
+            for q in ladder_queries:
+                row = conn.execute(q).fetchone()
+                if row:
+                    recent_rollups.append({
+                        "id": row[0], "title": row[1], "bluf": row[2], "timestamp": row[3]
+                    })
+            
+            # 2. Backfill to ensure exactly 4 rollups if the ladder is incomplete
+            if len(recent_rollups) < 4:
+                needed = 4 - len(recent_rollups)
+                existing_ids = [r["id"] for r in recent_rollups]
+                
+                if existing_ids:
+                    placeholders = ",".join("?" * len(existing_ids))
+                    backfill_q = f"SELECT id, title, bluf, timestamp FROM documents WHERE doc_type = 'rollup' AND id NOT IN ({placeholders}) ORDER BY timestamp DESC LIMIT ?"
+                    params = existing_ids + [needed]
+                else:
+                    backfill_q = "SELECT id, title, bluf, timestamp FROM documents WHERE doc_type = 'rollup' ORDER BY timestamp DESC LIMIT ?"
+                    params = [needed]
+                    
+                for row in conn.execute(backfill_q, params):
+                    recent_rollups.append({
+                        "id": row[0], "title": row[1], "bluf": row[2], "timestamp": row[3]
+                    })
+        except sqlite3.OperationalError:
+            pass
+
         # Generate nonce and session_id
         nonce = _nonce()
         sid = _session_id()
@@ -1063,6 +1153,7 @@ def prey8_perceive(
             "ts": _now_iso(),
             # Gate-enforced structured fields (P0 + P6)
             "p0_observations": obs_list,
+            "p0_web_search_query": web_search_query.strip(),
             "p6_memory_refs": mem_list,
             "p6_stigmergy_digest": stigmergy_digest.strip(),
             "gate": "PERCEIVE",
@@ -1131,6 +1222,8 @@ def prey8_perceive(
             "recent_yields": recent_yields,
             "recent_events": recent_events,
             "fts_results": fts_results,
+            "web_results": web_results,
+            "recent_rollups": recent_rollups,
             "memory_loss": {
                 "recovery_from_disk": recovery_info,
                 "orphaned_sessions": len(orphans),
@@ -1417,7 +1510,7 @@ def prey8_execute(
     sbe_then: str,
     artifacts: str,
     p4_adversarial_check: str,
-    fail_closed_gate: bool = False,
+    sbe_test_file: str,
 ) -> dict:
     """
     E -- EXECUTE: Track an execution step. Middle tile(s) in the mosaic.
@@ -1435,11 +1528,11 @@ def prey8_execute(
     - p4_adversarial_check: How was this step adversarially challenged?
       (P4 DISRUPT workflow: SURVEY -> HYPOTHESIZE -> ATTACK -> RECORD ->
       EVOLVE). What could go wrong? What edge cases exist?
-    - fail_closed_gate: MUST be explicitly True. This is the fail-closed
-      assertion — you are stating "I have verified this step meets the gate
-      requirements." Default is False = blocked.
+    - sbe_test_file: Path to an executable test file (e.g., pytest script)
+      that proves the SBE contract. The server will run this file. If it fails,
+      the gate blocks.
 
-    If ANY field is empty or fail_closed_gate is not True, you are GATE_BLOCKED.
+    If ANY field is empty or the test file fails, you are GATE_BLOCKED.
     Can be called multiple times for multi-step work.
 
     Args:
@@ -1450,11 +1543,11 @@ def prey8_execute(
         sbe_then: SBE Then postcondition (P2 SHAPE).
         artifacts: Comma-separated artifacts created/modified.
         p4_adversarial_check: How this step was adversarially challenged (P4 DISRUPT).
-        fail_closed_gate: Must be True to pass. Default False = blocked.
+        sbe_test_file: Path to the executable test file.
 
     Returns:
         dict with: execute_token, chain_hash, gate_receipt, step_number
-        OR GATE_BLOCKED if structured fields are missing.
+        OR GATE_BLOCKED if structured fields are missing or tests fail.
     """
     # ---- v4.0: DENY-BY-DEFAULT AGENT AUTHORIZATION ----
     agent_id = agent_id.strip().lower()
@@ -1521,19 +1614,63 @@ def prey8_execute(
         "sbe_then": sbe_then,
         "artifacts": artifacts_list,
         "p4_adversarial_check": p4_adversarial_check,
-        "fail_closed_gate": fail_closed_gate,
+        "sbe_test_file": sbe_test_file,
     }, agent_id=agent_id)
     if gate_block:
         return gate_block
 
+    # ---- IDEA 4: Executable Contracts (Pytest Enforcement) ----
+    root_dir = _find_root()
+    test_file_path = root_dir / sbe_test_file
+    if not test_file_path.exists() or not test_file_path.is_file():
+        return {
+            "status": "GATE_BLOCKED",
+            "reason": f"sbe_test_file '{sbe_test_file}' does not exist or is not a file.",
+            "bricked": True,
+        }
+        
+    try:
+        # Run the test file to prove the SBE contract
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", str(test_file_path), "-q", "--disable-warnings"],
+            cwd=str(root_dir),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL
+        )
+        if result.returncode != 0:
+            return {
+                "status": "GATE_BLOCKED",
+                "reason": f"sbe_test_file '{sbe_test_file}' failed execution. The SBE contract is broken.",
+                "test_output": result.stdout + "\n" + result.stderr,
+                "bricked": True,
+            }
+        test_receipt = result.stdout
+    except Exception as e:
+        return {
+            "status": "GATE_BLOCKED",
+            "reason": f"Failed to execute sbe_test_file '{sbe_test_file}': {str(e)}",
+            "bricked": True,
+        }
+
     # ---- Gate passed — proceed with execute ----
 
-    # ---- IDEA 2: Cryptographic Artifact Binding (Hash generation) ----
-    root_dir = _find_root()
+    # ---- IDEA 2 & 3: Cryptographic Artifact Binding & Disconnected Artifacts (mtime check) ----
     artifact_hashes = {}
+    session_start_ts = datetime.fromisoformat(session["started_at"]).timestamp()
+    
     for artifact in artifacts_list:
         artifact_path = root_dir / artifact
         if artifact_path.exists() and artifact_path.is_file():
+            # Check mtime to ensure it was actually modified during this session
+            mtime = os.path.getmtime(artifact_path)
+            if mtime < session_start_ts:
+                return {
+                    "status": "GATE_BLOCKED",
+                    "reason": f"Artifact '{artifact}' was not modified during this session (mtime < session start).",
+                    "bricked": True,
+                }
             try:
                 with open(artifact_path, "rb") as f:
                     artifact_hashes[artifact] = hashlib.sha256(f.read()).hexdigest()
@@ -1561,11 +1698,12 @@ def prey8_execute(
             "given": sbe_given.strip(),
             "when": sbe_when.strip(),
             "then": sbe_then.strip(),
+            "test_file": sbe_test_file,
+            "test_receipt": test_receipt[:1000], # Store first 1000 chars of test output
         },
         "p2_artifacts": artifacts_list,
         "p2_artifact_hashes": artifact_hashes,
         "p4_adversarial_check": p4_adversarial_check.strip(),
-        "p4_fail_closed_gate": True,
         "gate": "EXECUTE",
         "port_pair": "P2_SHAPE + P4_DISRUPT",
         "gate_passed": True,
@@ -1625,12 +1763,12 @@ def prey8_execute(
             "sbe_spec": event_data["p2_sbe_spec"],
             "artifacts_count": len(artifacts_list),
             "adversarial_check": p4_adversarial_check[:200],
-            "fail_closed_gate": True,
+            "test_receipt_length": len(test_receipt),
         },
         "action_logged": action_summary[:500],
         "instruction": (
             f"TILE {1 + step_num} PLACED [P2+P4 GATE PASSED]. Step {step_num} logged. "
-            f"SBE: Given/When/Then + {len(artifacts_list)} artifacts + P4 adversarial check. "
+            f"SBE: Given/When/Then + {len(artifacts_list)} artifacts + P4 adversarial check + Pytest passed. "
             "Call prey8_execute again for more steps, "
             "or call prey8_yield to close the mosaic. "
             "Yield requires: delivery_manifest, test_evidence, mutation_confidence(0-100), "
@@ -1802,9 +1940,10 @@ def prey8_yield(
             "instruction": f"Increase test coverage to reach {required_confidence}% confidence before yielding."
         }
 
-    # ---- IDEA 2: Cryptographic Artifact Binding ----
+    # ---- IDEA 2 & 3: Cryptographic Artifact Binding & Disconnected Artifacts (mtime check) ----
     root_dir = _find_root()
     conn = _get_conn()
+    session_start_ts = datetime.fromisoformat(session["started_at"]).timestamp()
     try:
         # Fetch all execute events for this session to get stored hashes
         stored_hashes = {}
@@ -1822,26 +1961,37 @@ def prey8_yield(
         # Verify hashes for all delivered artifacts
         all_artifacts = _split_csv(artifacts_created) + _split_csv(artifacts_modified)
         for artifact in all_artifacts:
-            if artifact in stored_hashes:
-                artifact_path = root_dir / artifact
-                current_hash = "NOT_FOUND"
-                if artifact_path.exists() and artifact_path.is_file():
-                    try:
-                        with open(artifact_path, "rb") as f:
-                            current_hash = hashlib.sha256(f.read()).hexdigest()
-                    except Exception:
-                        current_hash = "UNREADABLE"
-                
-                if current_hash != stored_hashes[artifact]:
+            artifact_path = root_dir / artifact
+            current_hash = "NOT_FOUND"
+            if artifact_path.exists() and artifact_path.is_file():
+                # Check mtime to ensure it was actually modified during this session
+                mtime = os.path.getmtime(artifact_path)
+                if mtime < session_start_ts:
                     return {
                         "status": "GATE_BLOCKED",
                         "gate": "YIELD",
                         "port_pair": "P3_INJECT + P5_IMMUNIZE",
                         "agent_id": agent_id,
-                        "error": f"Cryptographic Binding Failed. Artifact '{artifact}' was modified after EXECUTE or does not match its recorded hash.",
+                        "error": f"Artifact '{artifact}' was not modified during this session (mtime < session start).",
                         "bricked": True,
-                        "instruction": "Artifacts must not be tampered with between EXECUTE and YIELD. Re-run EXECUTE to record the new hash."
+                        "instruction": "You cannot claim to have created/modified an artifact that you did not touch."
                     }
+                try:
+                    with open(artifact_path, "rb") as f:
+                        current_hash = hashlib.sha256(f.read()).hexdigest()
+                except Exception:
+                    current_hash = "UNREADABLE"
+            
+            if artifact in stored_hashes and current_hash != stored_hashes[artifact]:
+                return {
+                    "status": "GATE_BLOCKED",
+                    "gate": "YIELD",
+                    "port_pair": "P3_INJECT + P5_IMMUNIZE",
+                    "agent_id": agent_id,
+                    "error": f"Cryptographic Binding Failed. Artifact '{artifact}' was modified after EXECUTE or does not match its recorded hash.",
+                    "bricked": True,
+                    "instruction": "Artifacts must not be tampered with between EXECUTE and YIELD. Re-run EXECUTE to record the new hash."
+                }
     finally:
         conn.close()
 
