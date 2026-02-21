@@ -22,6 +22,9 @@ keywords:
   - braided_mission_thread
   - omega_gen8
   - animation_candidate
+  - typescript
+  - javascript
+  - python
 bluf: |
   Probability is a landscape with attractors and repulsors — hills and valleys.
   Current gen AI is a higher-dimensional water-adjacent substrate that flows
@@ -209,7 +212,40 @@ Key frames:
 6. Camera pulls back — canal network reveals MOSAIC octree topology
 7. Obsidian Spider at center, legs touching all eight canal branches
 
-## 6. Cross-References
+## 6. Primary Languages & Polyglot Canalization
+
+The HFO Silk infrastructure is primarily woven in the operator's core languages:
+- **TypeScript (TS) / JavaScript (JS):** The primary substrate for Omega (the frontend, W3C pointer injection, BabylonJS, Excalidraw integration).
+- **Python (PY):** The primary substrate for Alpha (the backend, MCP servers, SSOT SQLite management, daemon fleet, and AI orchestration).
+
+However, the Obsidian Spider is polyglot. If the probability landscape requires it, the canals can be lined with other materials where the AI excels:
+- **Rust / Go:** For high-performance, memory-safe microservices or CLI tools if Python becomes a bottleneck.
+- **C# / C++:** For deeper system-level integrations or game engine bindings if the gesture control plane expands.
+- **Bash / Shell:** For the connective tissue and CI/CD fast checks (already in use).
+
+## 7. Options for Advancing the Braided Mission Thread (Alpha & Omega)
+
+Based on the SSOT (specifically *How To: Advance the Braided Dream — Operator's North Star Roadmap*), here are the concrete options for advancing the braided mission thread:
+
+### Option A: Pull the Omega Thread (The Application)
+*Focus: Making the Omega Gen8 gesture control plane "quine-ready" (reconstructable from documentation).*
+- **Action:** Weave the missing Tier 2 Recipe Cards (RC-09 through RC-14) for the core interaction pipeline (MediaPipe, Gesture FSM, touch2d Data Fabric, W3C Pointer Injection, Excalidraw, Autosave).
+- **Language Focus:** TypeScript / JavaScript.
+- **Goal:** Transform the 26K-line monolith into a fully documented, modular, and maintainable architecture.
+
+### Option B: Pull the Alpha Thread (The Governance & AI)
+*Focus: Hardening the cognitive persistence and AI orchestration layer.*
+- **Action:** Enhance the Shodh memory integration, refine the PREY8/HIVE8 MCP servers, or build out the daemon fleet (e.g., the Singer of Strife and Splendor).
+- **Language Focus:** Python.
+- **Goal:** Ensure the AI agents are strictly canalized by the SSOT and cannot hallucinate past the fail-closed gates.
+
+### Option C: Weave the Braid (Alpha + Omega Integration)
+*Focus: Connecting the governance to the reality contact.*
+- **Action:** Implement strict CI/CD fast checks (like the recently added `pytest` and `py_compile` gates) that run against the Omega TypeScript codebase whenever an Alpha Python agent attempts to yield.
+- **Language Focus:** Python (orchestration) + TypeScript (target).
+- **Goal:** Ensure that the AI's architectural decisions in Alpha are mathematically proven against the Omega codebase before being committed to the SSOT.
+
+## 8. Cross-References
 
 | Doc | Relation |
 |---|---|
