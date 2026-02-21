@@ -22,8 +22,9 @@
  *   npx jest gesture_fsm_plugin.spec --no-coverage --verbose
  */
 
-import { describe, it, expect, beforeEach, jest, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, beforeAll, jest, afterEach } from '@jest/globals';
 import { GestureFSMPlugin } from './gesture_fsm_plugin';
+import { initWasm } from './gesture_fsm_rs_adapter';
 import { asRaw } from './types';
 import { EventBus } from './event_bus';
 import { PluginContext, PathAbstractionLayer } from './plugin_supervisor';
@@ -48,6 +49,10 @@ describe('T-OMEGA-FSM-001 · GestureFSMPlugin — Zombie Listener Prevention', (
 
     let plugin: GestureFSMPlugin;
     let ctx: PluginContext;
+
+    beforeAll(async () => {
+        await initWasm();
+    });
 
     beforeEach(() => {
         ctx    = makeContext();

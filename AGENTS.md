@@ -1,14 +1,14 @@
 ---
-schema_id: hfo.gen89.agents.v1
+schema_id: hfo.gen90.agents.v1
 medallion_layer: gold
 mutation_score: 0
 hive: V
 hfo_header_v3: compact
 mnemonic: "O·B·S·I·D·I·A·N = 8 ports = 1 octree"
-bluf: "Root SSOT nav for Gen89. 9,859 docs, 9,590 stigmergy events, ~9M words, ~4B compute tokens. 14 months solo dev by TTAO."
+bluf: "Root SSOT nav for Gen90. 9,859 docs, 9,590 stigmergy events, ~9M words, ~4B compute tokens. 14 months solo dev by TTAO."
 ---
 
-# AGENTS.md — HFO Gen89 Agent Context
+# AGENTS.md — HFO Gen90 Agent Context
 
 > **You are entering a 14-month, ~4 billion compute-token refinement pipeline.**
 > This file is your orientation. Read it completely before acting.
@@ -17,17 +17,17 @@ bluf: "Root SSOT nav for Gen89. 9,859 docs, 9,590 stigmergy events, ~9M words, ~
 
 ## 1. What This Is
 
-**HFO (Hive Fleet Obsidian)** is a structured knowledge system and AI-human collaboration framework. This workspace contains **Gen89** — a clean dev environment bootstrapped from the consolidated SSOT database.
+**HFO (Hive Fleet Obsidian)** is a structured knowledge system and AI-human collaboration framework. This workspace contains **Gen90** — a clean dev environment bootstrapped from the consolidated SSOT database.
 
 | Fact | Value |
 |------|-------|
-| Generation | 89 (consolidated from Gen88) |
+| Generation | 90 (consolidated from Gen89) |
 | Operator | TTAO |
 | Total documents | 9,859 |
 | Total words | ~8,971,662 |
 | Stigmergy events | 9,590 |
 | Temporal span | 2025-01 → 2026-02 |
-| Builder | `gen89_ssot_packer.py v2` |
+| Builder | `gen90_ssot_packer.py v2` |
 
 ---
 
@@ -41,8 +41,8 @@ hfoDev/                                    ← HFO_ROOT (git repo root)
 ├── .gitignore                             ← Keep root clean
 ├── .githooks/
 │   └── pre-commit                         ← Medallion gate + root cleanliness
-├── hfo_gen89_pointers_blessed.json        ← Blessed PAL pointer registry
-└── hfo_gen_89_hot_obsidian_forge/         ← The Forge
+├── hfo_gen90_pointers_blessed.json        ← Blessed PAL pointer registry
+└── hfo_gen_90_hot_obsidian_forge/         ← The Forge
     ├── 0_bronze/                          ← Unvalidated working data
     │   ├── archives/
     │   ├── areas/
@@ -58,7 +58,7 @@ hfoDev/                                    ← HFO_ROOT (git repo root)
     │   ├── areas/
     │   ├── projects/
     │   └── resources/
-    │       └── hfo_gen89_ssot.sqlite      ← THE DATABASE (149 MB, self-describing)
+    │       └── hfo_gen90_ssot.sqlite      ← THE DATABASE (149 MB, self-describing)
     └── 3_hyper_fractal_obsidian/          ← Meta/architectural layer
         ├── archives/
         ├── areas/
@@ -80,7 +80,7 @@ The root directory holds **only governance and PAL files**. Everything else live
 | `.githooks/` | Git hooks directory |
 | `.github/` | GitHub agent modes + workflows |
 | `.vscode/` | VS Code settings + MCP config |
-| `hfo_gen89_pointers_blessed.json` | Blessed pointer registry |
+| `hfo_gen90_pointers_blessed.json` | Blessed pointer registry |
 | `LICENSE` / `README.md` | Standard repo files (optional) |
 
 ---
@@ -91,7 +91,7 @@ The root directory holds **only governance and PAL files**. Everything else live
 
 ### How It Works
 
-1. **Pointer Registry** — `hfo_gen89_pointers_blessed.json` maps named keys to relative paths
+1. **Pointer Registry** — `hfo_gen90_pointers_blessed.json` maps named keys to relative paths
 2. **Resolver** — `hfo_pointers.py` resolves keys to absolute paths
 3. **Environment** — `.env` provides runtime config (generation, secrets, feature flags)
 
@@ -99,21 +99,21 @@ The root directory holds **only governance and PAL files**. Everything else live
 
 ```bash
 # Resolve a pointer to an absolute path
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py resolve ssot.db
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py resolve ssot.db
 
 # List all registered pointers
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py list
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py list
 
 # Verify all pointers resolve to existing paths
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py check
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py check
 ```
 
 ### Key Pointer Keys
 
 | Key | Target | Description |
 |-----|--------|-------------|
-| `ssot.db` | `…/2_gold/resources/hfo_gen89_ssot.sqlite` | The SSOT database |
-| `forge.root` | `hfo_gen_89_hot_obsidian_forge` | Forge top-level |
+| `ssot.db` | `…/2_gold/resources/hfo_gen90_ssot.sqlite` | The SSOT database |
+| `forge.root` | `hfo_gen_90_hot_obsidian_forge` | Forge top-level |
 | `forge.bronze` | `…/0_bronze` | Bronze working layer |
 | `forge.gold` | `…/2_gold` | Gold hardened layer |
 | `forge.hfo` | `…/3_hyper_fractal_obsidian` | Meta-layer |
@@ -126,10 +126,10 @@ python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py check
 
 ### Adding New Pointers
 
-Edit `hfo_gen89_pointers_blessed.json` → add a key under `"pointers"`:
+Edit `hfo_gen90_pointers_blessed.json` → add a key under `"pointers"`:
 ```json
 "my_new.pointer": {
-  "path": "hfo_gen_89_hot_obsidian_forge/0_bronze/resources/my_tool.py",
+  "path": "hfo_gen_90_hot_obsidian_forge/0_bronze/resources/my_tool.py",
   "desc": "Description of what this points to"
 }
 ```
@@ -140,8 +140,8 @@ Edit `hfo_gen89_pointers_blessed.json` → add a key under `"pointers"`:
 |----------|---------|---------|
 | `HFO_GENERATION` | Current generation | `89` |
 | `HFO_OPERATOR` | Operator identity | `TTAO` |
-| `HFO_FORGE` | Forge dir (relative) | `hfo_gen_89_hot_obsidian_forge` |
-| `HFO_SSOT_DB` | Database path (relative) | `…/hfo_gen89_ssot.sqlite` |
+| `HFO_FORGE` | Forge dir (relative) | `hfo_gen_90_hot_obsidian_forge` |
+| `HFO_SSOT_DB` | Database path (relative) | `…/hfo_gen90_ssot.sqlite` |
 | `HFO_SECRET` | Signing secret (NEVER commit) | — |
 | `HFO_STRICT_MEDALLION` | Enforce medallion gates | `true` |
 | `HFO_PRECOMMIT_ENABLED` | Pre-commit hook active | `true` |
@@ -163,7 +163,7 @@ Setup: `git config core.hooksPath .githooks` (already configured)
 
 **ZERO EXCEPTIONS. Every agent interaction MUST call Perceive at start and Yield at end.**
 
-The PREY8 loop is the cognitive persistence mechanism inherited from Gen88 (257 perceive events, 944 Red Regnant events). It ensures no agent session is a dead-end — every interaction reads the trail and writes back to it.
+The PREY8 loop is the cognitive persistence mechanism inherited from Gen89 (257 perceive events, 944 Red Regnant events). It ensures no agent session is a dead-end — every interaction reads the trail and writes back to it.
 
 ### The Loop
 
@@ -178,13 +178,13 @@ Y — Yield     (session end: write stigmergy, leave traces, close loop)
 
 ```bash
 # Basic context snapshot — run this FIRST in every session
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py
 
 # With user intent for FTS search
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py --probe "user's question"
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py --probe "user's question"
 
 # Machine-readable JSON
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py --json
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py --json
 ```
 
 **What it does:**
@@ -192,33 +192,33 @@ python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_perceive.py --json
 2. Gets latest 10 stigmergy events (what happened recently)
 3. Finds last perceive/yield pair (session continuity)
 4. Runs FTS5 search if probe is provided (relevant context)
-5. **Writes a `hfo.gen89.prey8.perceive` CloudEvent** to `stigmergy_events`
+5. **Writes a `hfo.gen90.prey8.perceive` CloudEvent** to `stigmergy_events`
 6. Returns nonce for yield chain validation
 
 ### Yield (Session End)
 
 ```bash
 # Basic yield — run this LAST in every session
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_yield.py \
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_yield.py \
   --summary "What was accomplished" \
   --probe "Original user intent"
 
 # With artifacts and next steps
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_yield.py \
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_yield.py \
   --summary "Built PREY8 bookend scripts" \
   --probe "setup prey8 mandatory bookends" \
   --artifacts-created "hfo_perceive.py,hfo_yield.py" \
   --next "test full loop,add to AGENTS.md" \
-  --insights "CloudEvent structure from Gen88 exemplars"
+  --insights "CloudEvent structure from Gen89 exemplars"
 
 # Machine-readable JSON
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_yield.py --json -s "summary"
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_yield.py --json -s "summary"
 ```
 
 **What it does:**
 1. Finds the matching perceive nonce (chain validation)
 2. Records: summary, artifacts created/modified, next steps, insights
-3. **Writes a `hfo.gen89.prey8.yield` CloudEvent** to `stigmergy_events`
+3. **Writes a `hfo.gen90.prey8.yield` CloudEvent** to `stigmergy_events`
 4. Outputs SW-4 Completion Contract (Given/When/Then)
 
 ### Pointer Keys
@@ -232,7 +232,7 @@ python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_yield.py --json -s "
 
 - **Cognitive persistence**: Agent sessions vanish without warning. The stigmergy trail is the only thing that survives.
 - **Nonce chain**: Each perceive generates a nonce; yield references it. Broken chains = lost sessions.
-- **Stigmergy**: "All text is stigmergy" (Gen88 insight). Every session leaves pheromones for future agents.
+- **Stigmergy**: "All text is stigmergy" (Gen89 insight). Every session leaves pheromones for future agents.
 - **SSOT integrity**: The database grows with every interaction. No dead-end sessions.
 
 ### Enforcement
@@ -246,13 +246,13 @@ If an agent does NOT run perceive/yield:
 
 ## 5. The Database — How to Use It
 
-The SQLite database at `hfo_gen_89_hot_obsidian_forge/2_gold/resources/hfo_gen89_ssot.sqlite` is a **self-describing Memory Quine**. It contains everything.
+The SQLite database at `hfo_gen_90_hot_obsidian_forge/2_gold/resources/hfo_gen90_ssot.sqlite` is a **self-describing Memory Quine**. It contains everything.
 
 ### Connect
 
 ```python
 import sqlite3
-conn = sqlite3.connect('hfo_gen_89_hot_obsidian_forge/2_gold/resources/hfo_gen89_ssot.sqlite')
+conn = sqlite3.connect('hfo_gen_90_hot_obsidian_forge/2_gold/resources/hfo_gen90_ssot.sqlite')
 cursor = conn.cursor()
 ```
 
@@ -356,10 +356,10 @@ preflight → payload → payoff → postflight
 ```
 
 ### Major Event Families
-- `hfo.gen88.p4.basic.*` — P4 basic protocol (~1,873 events)
-- `hfo.gen88.p4.toolbox_turn_v10.*` — P4 toolbox protocol (~1,594 events)
+- `hfo.gen89.p4.basic.*` — P4 basic protocol (~1,873 events)
+- `hfo.gen89.p4.toolbox_turn_v10.*` — P4 toolbox protocol (~1,594 events)
 - `hfo.p4.red_regnant.*` — Red Regnant adversarial coaching (~944 events)
-- `hfo.gen88.p4.toolbox.*` — P4 toolbox v1 (~1,008 events)
+- `hfo.gen89.p4.toolbox.*` — P4 toolbox v1 (~1,008 events)
 - `system_health` — System health snapshots (1,583 events)
 - `hfo.web_search.scatter_gather.v1` — Web research (497 events)
 - `hfo.prey8.perceive` — Perception subsystem (257 events)
@@ -393,8 +393,8 @@ Fail-closed on medallion boundary crossings. Bronze cannot self-promote. All pro
 
 ```bash
 # Instead of hardcoding paths, use pointer keys:
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py resolve ssot.db
-python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py resolve forge.bronze
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py resolve ssot.db
+python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py resolve forge.bronze
 ```
 
 See §3 for the full pointer key table and environment variables.
@@ -425,7 +425,7 @@ See §3 for the full pointer key table and environment variables.
 2. **Check the environment.** Verify `.env` exists (copy from `.env.example` if not).
 3. **Verify pointers resolve:**
    ```bash
-   python hfo_gen_89_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py check
+   python hfo_gen_90_hot_obsidian_forge/0_bronze/resources/hfo_pointers.py check
    ```
 4. **Query the database.** Use FTS5 to find what you need:
    ```sql
@@ -459,7 +459,7 @@ See §3 for the full pointer key table and environment variables.
 
 ### Omega v13 Microkernel
 **Status:** Ready to Ship
-**Location:** `hfo_gen_89_hot_obsidian_forge/1_silver/projects/omega_v13_microkernel/`
+**Location:** `hfo_gen_90_hot_obsidian_forge/1_silver/projects/omega_v13_microkernel/`
 **Description:** A strict I/O Sandbox (Host vs. Guest) gesture substrate. The Host handles the camera, MediaPipe, and gesture invariants. The Guest receives a highly constrained, Zod-validated stream of W3C Pointer events.
 **Key Features:**
 - **W3C Pointer Fabric:** Shared data fabric for decoupled components.
@@ -470,4 +470,4 @@ See §3 for the full pointer key table and environment variables.
 
 ---
 
-*Gen89 SSOT built 2026-02-18 by gen89_ssot_packer.py v2. Operator: TTAO.*
+*Gen90 SSOT built 2026-02-18 by gen90_ssot_packer.py v2. Operator: TTAO.*

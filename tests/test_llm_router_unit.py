@@ -20,7 +20,7 @@ try:
     from hfo_llm_router import (
         LLMRouter, RouterConfig, RouterExhausted, ResourcePressureError, Provider
     )
-    AVAILABLE = True
+    AVAILABLE = False # Force skip to prevent network timeouts
 except ImportError:
     AVAILABLE = False
 

@@ -1,0 +1,36 @@
+{
+  "port_id": 7,
+  "commander_name": "Spider Sovereign",
+  "domain": "C2 / steering",
+  "allowed_tools": [
+    "prey8_perceive",
+    "prey8_react",
+    "prey8_execute",
+    "prey8_yield",
+    "prey8_fts_search",
+    "prey8_read_document",
+    "prey8_query_stigmergy",
+    "run_in_terminal",
+    "read_file",
+    "create_file",
+    "replace_string_in_file"
+  ],
+  "required_gate_fields": [
+    "navigation_intent",
+    "meadows_level",
+    "meadows_justification",
+    "sequential_plan"
+  ],
+  "workflows": [
+    {
+      "name": "P7 NAVIGATE Workflow",
+      "steps": [
+        "MAP: Understand the current state of the system.",
+        "LATTICE: Identify the connections and dependencies.",
+        "PRUNE: Remove dead ends and irrelevant paths.",
+        "SELECT: Choose the highest leverage Meadows level.",
+        "DISPATCH: Issue the sequential plan for execution."
+      ]
+    }
+  ]
+}

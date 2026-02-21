@@ -1,5 +1,5 @@
 # features/resource_governor.feature
-# HFO Gen89 — Resource Governor ATDD Contract
+# HFO Gen90 — Resource Governor ATDD Contract
 #
 # Targets: CPU ≤ 80%, RAM ≤ 80%, VRAM ≤ 80% of budget, NPU ≥ 30% utilisation.
 # Governor enforces these by: evicting idle VRAM models, emitting NPU-prefer
@@ -30,7 +30,7 @@ Feature: Resource Governor Enforcement
     And Ollama has 2 models loaded: "granite4:3b" idle 5 min, "qwen2.5:3b" idle 8 min
     When I call governor.enforce()
     Then Ollama DELETE keep_alive is called for "qwen2.5:3b" first
-    And a "hfo.gen89.governor.eviction" stigmergy event is written
+    And a "hfo.gen90.governor.eviction" stigmergy event is written
     And the eviction reason is "vram_above_80pct"
 
   Scenario: Governor evicts all loaded models when VRAM exceeds 95 percent
@@ -44,18 +44,18 @@ Feature: Resource Governor Enforcement
     Given RAM is 90 percent
     When a daemon requests an Ollama inference slot
     Then governor.wait_for_gpu_headroom() raises ResourcePressureError
-    And the event "hfo.gen89.governor.ram_blocked" is written
+    And the event "hfo.gen90.governor.ram_blocked" is written
 
   Scenario: Governor emits NPU-prefer signal when RAM above 80 percent
     Given RAM is 83 percent
     When I call governor.enforce()
-    Then a "hfo.gen89.governor.npu_prefer" event is written to stigmergy
+    Then a "hfo.gen90.governor.npu_prefer" event is written to stigmergy
     And the signal contains field "ram_pct" equal to 83
 
   Scenario: Governor emits NPU-prefer signal when NPU utilisation below 30 percent
     Given the last 10 inferences show NPU used 2 times
     When I call governor.enforce()
-    Then a "hfo.gen89.governor.npu_underutilised" event is written
+    Then a "hfo.gen90.governor.npu_underutilised" event is written
     And the signal contains field "npu_rate_pct" equal to 20
 
   # ─────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ Feature: Resource Governor Enforcement
     And the expected fleet size is 8
     When I call governor.reap_ghost_processes()
     Then processes above the fleet size limit are killed
-    And a "hfo.gen89.governor.ghost_reaped" event records the killed PIDs
+    And a "hfo.gen90.governor.ghost_reaped" event records the killed PIDs
     And exactly 8 HFO daemon processes remain
 
   Scenario: Governor does not kill the fleet manager or watchdog
@@ -83,11 +83,11 @@ Feature: Resource Governor Enforcement
     Given the governor background thread is started
     When 65 seconds pass
     Then governor.enforce() has been called at least once
-    And at least one "hfo.gen89.governor.cycle" event is in stigmergy
+    And at least one "hfo.gen90.governor.cycle" event is in stigmergy
 
   Scenario: Governor writes a 10-minute rolling summary every 10 minutes
     Given 20 governor snapshots have been collected
-    When I query stigmergy for "hfo.gen89.governor.summary"
+    When I query stigmergy for "hfo.gen90.governor.summary"
     Then at least one summary event exists
     And it contains fields: avg_cpu_pct, avg_ram_pct, avg_vram_pct, npu_rate_pct
 

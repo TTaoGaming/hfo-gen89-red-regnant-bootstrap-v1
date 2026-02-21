@@ -1,0 +1,1 @@
+C:\hfoDev\hfo_gen_89_hot_obsidian_forge\0_bronze\demoted_silver\projects\omega_v13_microkernel\omega_core_rs\target\wasm32-unknown-unknown\release\omega_core_rs.wasm: C:\hfoDev\hfo_gen_89_hot_obsidian_forge\0_bronze\demoted_silver\projects\omega_v13_microkernel\omega_core_rs\src\lib.rs

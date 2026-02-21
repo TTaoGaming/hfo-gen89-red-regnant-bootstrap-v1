@@ -1,5 +1,5 @@
 # features/shodh_hebbian.feature
-# HFO Gen89 — Shodh Hebbian Learning ATDD Contract
+# HFO Gen90 — Shodh Hebbian Learning ATDD Contract
 #
 # SBE: Specifies the Hebbian co-retrieval learning loop that strengthens
 # shodh_associations AND emits CloudEvents into stigmergy_events.
@@ -8,7 +8,7 @@
 #   1. cmd_co_retrieve() receives a list of doc_ids co-retrieved in one turn
 #   2. Hub docs (catalog + orientation docs) are EXCLUDED from pairing
 #   3. For every non-hub pair (a, b): weight += GAMMA, capped at 1.0
-#   4. A CloudEvent (hfo.gen89.shodh.hebbian.co_retrieval) is written to
+#   4. A CloudEvent (hfo.gen90.shodh.hebbian.co_retrieval) is written to
 #      stigmergy_events with full signal_metadata — closing the feedback loop
 #
 # P4 Adversarial Invariants (GRUDGE guards):
@@ -78,7 +78,7 @@ Feature: Shodh Hebbian co-retrieval learning loop
   Scenario: Successful co-retrieval emits a CloudEvent to stigmergy_events
     Given doc_ids [53, 157, 304] with no hubs
     When cmd_co_retrieve is called
-    Then a stigmergy event of type "hfo.gen89.shodh.hebbian.co_retrieval" is written
+    Then a stigmergy event of type "hfo.gen90.shodh.hebbian.co_retrieval" is written
     And the event data_json contains a "signal_metadata" key
     And the signal_metadata port is "P6"
     And the event data_json contains "pairs_updated"
@@ -87,7 +87,7 @@ Feature: Shodh Hebbian co-retrieval learning loop
   Scenario: No stigmergy event is written when all docs are hubs
     Given doc_ids [37] where all docs are hubs
     When cmd_co_retrieve is called
-    Then no stigmergy event of type "hfo.gen89.shodh.hebbian.co_retrieval" is written
+    Then no stigmergy event of type "hfo.gen90.shodh.hebbian.co_retrieval" is written
 
   # ──────────────────────────────────────────────────────────────
   # § 4  GRUDGE GUARDS — Negative specs prevent regressions

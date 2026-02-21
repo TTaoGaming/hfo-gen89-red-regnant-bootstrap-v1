@@ -1,5 +1,5 @@
 # features/llm_router.feature
-# HFO Gen89 — Vendor-Agnostic LLM Router
+# HFO Gen90 — Vendor-Agnostic LLM Router
 # ATDD contract for hfo_llm_router.py
 #
 # Providers: NPU (OpenVINO) → Ollama (local GPU) → Gemini (cloud) → OpenRouter (cloud)
@@ -54,7 +54,7 @@ Feature: Vendor-Agnostic LLM Router
     And OPENROUTER_API_KEY is not set
     When I call the router with provider_strategy "npu_first"
     Then a RouterExhausted exception is raised
-    And the failure is written to stigmergy as "hfo.gen89.llm_router.exhausted"
+    And the failure is written to stigmergy as "hfo.gen90.llm_router.exhausted"
 
   # ─────────────────────────────────────────────────────────────
   # Ollama-only strategy (for high-context tasks)
@@ -100,7 +100,7 @@ Feature: Vendor-Agnostic LLM Router
     Given RAM usage is 96 percent
     When I call the router with any strategy
     Then a ResourcePressureError is raised with message containing "RAM"
-    And the event "hfo.gen89.llm_router.ram_blocked" is written to stigmergy
+    And the event "hfo.gen90.llm_router.ram_blocked" is written to stigmergy
 
   # ─────────────────────────────────────────────────────────────
   # Observability contract
@@ -109,7 +109,7 @@ Feature: Vendor-Agnostic LLM Router
   Scenario: Every successful inference writes a routing event to stigmergy
     Given the NPU model is configured
     When I call the router and inference succeeds
-    Then a "hfo.gen89.llm_router.inference" event is in stigmergy
+    Then a "hfo.gen90.llm_router.inference" event is in stigmergy
     And the event contains fields: provider, model, latency_ms, tokens, port
 
   Scenario: Router tracks NPU utilisation rate over 10-minute window

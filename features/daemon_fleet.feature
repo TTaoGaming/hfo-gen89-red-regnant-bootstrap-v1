@@ -1,5 +1,5 @@
 # features/daemon_fleet.feature
-# HFO Gen89 — 8-Daemon Fleet ATDD Contract
+# HFO Gen90 — 8-Daemon Fleet ATDD Contract
 #
 # The fleet runs exactly 8 OctreeDaemon instances (P0–P7).
 # All LLM calls route through hfo_llm_router.py.
@@ -33,7 +33,7 @@ Feature: 8-Daemon Fleet Lifecycle
     Given the fleet is running with 8 daemons
     When daemon P4 is killed externally
     Then within 30 seconds the fleet has 8 running daemons again
-    And a "hfo.gen89.fleet.respawn" stigmergy event is written for P4
+    And a "hfo.gen90.fleet.respawn" stigmergy event is written for P4
 
   Scenario: Fleet nuke clears all processes and state before relaunch
     Given the fleet is running with 8 daemons
@@ -82,7 +82,7 @@ Feature: 8-Daemon Fleet Lifecycle
     Given the governor gate returns "HOLD"
     When a daemon's _advisory_tick() is called
     Then the LLM call is skipped
-    And the daemon writes a "hfo.gen89.daemon.backpressure" stigmergy event
+    And the daemon writes a "hfo.gen90.daemon.backpressure" stigmergy event
     And the daemon sleeps for its tick_rate before retrying
 
   Scenario: Daemon P0 TRUE_SEEING always runs regardless of governor gate
@@ -117,7 +117,7 @@ Feature: 8-Daemon Fleet Lifecycle
 
   Scenario: TRUE_SEEING writes to stigmergy at most once per 10 minutes
     Given P0 daemon has been running for 20 minutes
-    When I count "hfo.gen89.p0.true_seeing" stigmergy events
+    When I count "hfo.gen90.p0.true_seeing" stigmergy events
     Then there are between 2 and 4 events (approximately 6 per hour)
 
   Scenario: TRUE_SEEING still updates the status file every 30 seconds

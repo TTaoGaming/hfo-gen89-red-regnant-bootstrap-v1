@@ -1,8 +1,8 @@
 {
   "scripts": {
     "build": "npx esbuild demo.ts --bundle --outfile=dist/demo.js --sourcemap --format=esm --platform=browser --target=chrome120",
-    "build:demo2": "npx esbuild demo_2026-02-20.ts --bundle --outfile=dist/demo2.js --sourcemap --format=esm --platform=browser --target=chrome120 --external:./babylon_physics && npx esbuild tldraw_entrypoint.tsx --bundle --outfile=dist/tldraw_bundle.js --sourcemap --format=iife --platform=browser --target=chrome120 && node -e \"require('fs').copyFileSync('node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm','dist/HavokPhysics.wasm')\"",
-    "build:golden": "npx esbuild demo_video_golden.ts --bundle --outfile=dist/golden_master.js --sourcemap --format=esm --platform=browser --target=chrome120 --loader:.wasm=file && node -e \"require('fs').copyFileSync('node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm','dist/HavokPhysics.wasm')\"",
+    "build:demo2": "npx esbuild demo_2026-02-20.ts --bundle --outfile=dist/demo2.js --sourcemap --format=esm --platform=browser --target=chrome120 --external:./babylon_physics && npx esbuild tldraw_entrypoint.tsx --bundle --outfile=dist/tldraw_bundle.js --sourcemap --format=iife --platform=browser --target=chrome120 && node -e \"require('fs').copyFileSync('node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm','dist/HavokPhysics.wasm'); require('fs').copyFileSync('omega_core_rs/pkg/omega_core_rs_bg.wasm','dist/omega_core_rs_bg.wasm')\"",
+    "build:golden": "npx esbuild demo_video_golden.ts --bundle --outfile=dist/golden_master.js --sourcemap --format=esm --platform=browser --target=chrome120 --loader:.wasm=file && node -e \"require('fs').copyFileSync('node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm','dist/HavokPhysics.wasm'); require('fs').copyFileSync('omega_core_rs/pkg/omega_core_rs_bg.wasm','dist/omega_core_rs_bg.wasm')\"",
     "watch:demo2": "npx esbuild demo_2026-02-20.ts --bundle --outfile=dist/demo2.js --sourcemap --format=esm --platform=browser --target=chrome120 --external:./babylon_physics --watch",
     "serve": "npx serve . --port 5173 --no-clipboard",
     "dev": "npx concurrently \"npm run watch:demo2\" \"npm run serve\"",

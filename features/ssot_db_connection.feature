@@ -1,5 +1,5 @@
 # features/ssot_db_connection.feature
-# HFO Gen89 — SSOT Database Connection ATDD Contract
+# HFO Gen90 — SSOT Database Connection ATDD Contract
 #
 # Root cause of FSM-V10 through FSM-V17 write-lock failures:
 #   15+ daemon files each had a HARDCODED COPY of get_db_readwrite() with

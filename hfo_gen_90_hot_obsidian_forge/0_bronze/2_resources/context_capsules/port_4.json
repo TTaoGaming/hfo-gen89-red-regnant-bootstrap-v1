@@ -1,0 +1,33 @@
+{
+  "port_id": 4,
+  "commander_name": "Red Regnant",
+  "domain": "Red team / probing",
+  "allowed_tools": [
+    "prey8_perceive",
+    "prey8_react",
+    "prey8_execute",
+    "prey8_yield",
+    "prey8_fts_search",
+    "prey8_read_document",
+    "prey8_query_stigmergy",
+    "run_in_terminal",
+    "read_file",
+    "grep_search"
+  ],
+  "required_gate_fields": [
+    "p4_adversarial_check",
+    "fail_closed_gate"
+  ],
+  "workflows": [
+    {
+      "name": "P4 DISRUPT Workflow",
+      "steps": [
+        "SURVEY: Scan the target for weaknesses.",
+        "HYPOTHESIZE: Formulate an attack vector.",
+        "ATTACK: Execute the disruption.",
+        "RECORD: Log the results (Grudges/Scars).",
+        "EVOLVE: Update the mutation wall."
+      ]
+    }
+  ]
+}

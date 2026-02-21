@@ -68,7 +68,7 @@ function activate(context) {
                     : '  none this window';
 
                 const msg = [
-                    `HFO Gen89 — P0 TRUE_SEEING  (target: ${tgt}% per resource)`,
+                    `HFO Gen90 — P0 TRUE_SEEING  (target: ${tgt}% per resource)`,
                     `Updated: ${c.timestamp}`,
                     ``,
                     `                  current   avg10m   peak   Δtarget`,
@@ -283,7 +283,7 @@ function activate(context) {
                     .join('\n') || '  (none loaded)';
 
                 const msg = [
-                    `HFO Gen89 — P0 TRUE_SEEING`,
+                    `HFO Gen90 — P0 TRUE_SEEING`,
                     `Updated: ${c.timestamp}`,
                     ``,
                     `CPU        ${c.cpu_pct}%  (avg ${r.cpu_pct_avg}%  peak ${r.cpu_pct_peak}%)`,

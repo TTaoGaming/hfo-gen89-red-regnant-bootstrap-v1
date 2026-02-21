@@ -24,7 +24,8 @@
  *   npx jest microkernel_arch_violations.spec --no-coverage --verbose
  */
 
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, beforeAll, jest } from '@jest/globals';
+import { initWasm } from './gesture_fsm_rs_adapter';
 import { asRaw } from './types';
 import { EventBus } from './event_bus';
 import { PluginSupervisor, Plugin, PluginContext, PathAbstractionLayer } from './plugin_supervisor';
@@ -58,6 +59,10 @@ function makeContext(overrides: Partial<PluginContext> = {}): PluginContext {
     pal.register('ElementFromPoint', (x: number, y: number) => null);
     return { eventBus: new EventBus(), pal, ...overrides };
 }
+
+beforeAll(async () => {
+    await initWasm();
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ATDD-ARCH-001 — V1: Global Singleton Contraband

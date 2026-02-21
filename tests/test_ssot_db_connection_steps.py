@@ -35,7 +35,7 @@ RESOURCES = (
     Path(__file__).parent.parent
     / "hfo_gen_90_hot_obsidian_forge"
     / "0_bronze"
-    / "resources"
+    / "2_resources"
 )
 sys.path.insert(0, str(RESOURCES))
 

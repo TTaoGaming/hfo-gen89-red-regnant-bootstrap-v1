@@ -728,7 +728,8 @@ def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") 
                     [sys.executable, "-m", "py_compile", str(file_path)],
                     capture_output=True,
                     text=True,
-                    timeout=10
+                    timeout=10,
+                    stdin=subprocess.DEVNULL
                 )
                 if result.returncode != 0:
                     passed = False
@@ -744,7 +745,8 @@ def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") 
             cwd=str(root_dir),
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=60,
+            stdin=subprocess.DEVNULL
         )
         if result.returncode != 0:
             passed = False

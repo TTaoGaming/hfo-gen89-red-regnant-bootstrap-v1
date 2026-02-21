@@ -1,4 +1,4 @@
-# ─── HFO Gen89 .gitignore ───────────────────────────────────
+# ─── HFO Gen90 .gitignore ───────────────────────────────────
 # Rule: root stays clean. Forge holds everything.
 # Rule: secrets never committed. Artifacts are ephemeral.
 

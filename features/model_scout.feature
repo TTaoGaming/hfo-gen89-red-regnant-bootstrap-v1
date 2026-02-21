@@ -1,5 +1,5 @@
 # features/model_scout.feature
-# HFO Gen89 — Model Scout Spell v1
+# HFO Gen90 — Model Scout Spell v1
 # ATDD contract: Discover → Eval → GA → MAP-Elite → .env patch
 #
 # Guarded by pytest-bdd steps in tests/test_model_scout_steps.py
