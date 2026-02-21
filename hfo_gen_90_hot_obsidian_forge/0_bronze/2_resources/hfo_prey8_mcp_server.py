@@ -682,8 +682,9 @@ GATE_SPECS = {
         "required_fields": [
             "shared_data_refs", "navigation_intent",
             "meadows_level", "meadows_justification", "sequential_plan",
+            "tactical_plan", "strategic_plan", "sequential_thinking", "cynefin_classification"
         ],
-        "description": "Must supply data fabric refs (P1), Meadows level, and navigation strategy (P7)",
+        "description": "Must supply data fabric refs (P1), Meadows level, navigation strategy (P7), tactical/strategic plans, sequential thinking, and Cynefin classification",
     },
     "EXECUTE": {
         "port_pair": "P2_SHAPE + P4_DISRUPT",
@@ -1022,7 +1023,10 @@ def prey8_react(
     agent_id: str,
     perceive_nonce: str,
     analysis: str,
-    plan: str,
+    tactical_plan: str,
+    strategic_plan: str,
+    sequential_thinking: str,
+    cynefin_classification: str,
     shared_data_refs: str,
     navigation_intent: str,
     meadows_level: int,
@@ -1033,7 +1037,7 @@ def prey8_react(
     R -- REACT: Analyze context and form strategy. Second tile in the mosaic.
     Port pair: P1 BRIDGE + P7 NAVIGATE (data fabric + strategic steering).
 
-    FAIL-CLOSED GATE: You MUST supply all five structured fields:
+    FAIL-CLOSED GATE: You MUST supply all structured fields:
     - shared_data_refs: Comma-separated cross-references bridged from other
       contexts or data sources (P1 BRIDGE workflow: DISCOVER -> EXTRACT ->
       CONTRACT -> BIND -> VERIFY). What data did you connect?
@@ -1048,6 +1052,10 @@ def prey8_react(
       this the right level of intervention?
     - sequential_plan: Comma-separated ordered reasoning steps. The structured
       plan the agent will follow through Execute.
+    - tactical_plan: The immediate, low-level plan (for <8 Meadows level).
+    - strategic_plan: The higher-level plan (for >=8 Meadows level) that the tactical plan connects to.
+    - sequential_thinking: Auditable AI thoughts showing the reasoning process.
+    - cynefin_classification: The Cynefin domain (Clear, Complicated, Complex, Chaotic, Disorder).
 
     If ANY field is empty or meadows_level is not 1-13, you are GATE_BLOCKED.
 
@@ -1058,7 +1066,10 @@ def prey8_react(
     Args:
         perceive_nonce: The nonce from prey8_perceive (REQUIRED -- tamper check).
         analysis: Your interpretation of the context from Perceive.
-        plan: Your high-level plan of action (what and why).
+        tactical_plan: Your immediate, low-level plan of action.
+        strategic_plan: Your higher-level plan of action.
+        sequential_thinking: Auditable AI thoughts.
+        cynefin_classification: The Cynefin domain.
         shared_data_refs: Comma-separated P1 BRIDGE cross-references.
         navigation_intent: P7 NAVIGATE strategic direction.
         meadows_level: Meadows leverage level 1-13.
@@ -1137,6 +1148,10 @@ def prey8_react(
         "meadows_level": meadows_level,
         "meadows_justification": meadows_justification,
         "sequential_plan": plan_steps_list,
+        "tactical_plan": tactical_plan,
+        "strategic_plan": strategic_plan,
+        "sequential_thinking": sequential_thinking,
+        "cynefin_classification": cynefin_classification,
     }, agent_id=agent_id)
     if gate_block:
         return gate_block
@@ -1168,7 +1183,10 @@ def prey8_react(
         "session_id": session["session_id"],
         "agent_id": agent_id,
         "analysis": analysis[:2000],
-        "plan": plan[:2000],
+        "tactical_plan": tactical_plan[:2000],
+        "strategic_plan": strategic_plan[:2000],
+        "sequential_thinking": sequential_thinking[:4000],
+        "cynefin_classification": cynefin_classification.strip(),
         "ts": _now_iso(),
         # Gate-enforced structured fields (P1 + P7)
         "p1_shared_data_refs": data_refs_list,
@@ -1232,6 +1250,7 @@ def prey8_react(
             "meadows_justification": meadows_justification[:200],
             "sequential_plan_steps": len(plan_steps_list),
             "navigation_intent": navigation_intent[:200],
+            "cynefin_classification": cynefin_classification,
         },
         "p4_directive": (
             "P4 RED REGNANT -- Adversarial coaching protocol active. "
@@ -1239,7 +1258,8 @@ def prey8_react(
             "Challenge assumptions. Seek edge cases. Validate before trusting."
         ),
         "analysis_hash": hashlib.sha256(analysis.encode()).hexdigest()[:16],
-        "plan_hash": hashlib.sha256(plan.encode()).hexdigest()[:16],
+        "tactical_plan_hash": hashlib.sha256(tactical_plan.encode()).hexdigest()[:16],
+        "strategic_plan_hash": hashlib.sha256(strategic_plan.encode()).hexdigest()[:16],
         "instruction": (
             f"TILE 1 PLACED [P1+P7 GATE PASSED]. Token: {react_token}, Chain: {c_hash[:12]}... "
             f"Meadows L{meadows_level}. {len(plan_steps_list)} plan steps logged. "

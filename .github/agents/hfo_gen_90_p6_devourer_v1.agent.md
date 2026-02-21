@@ -93,10 +93,13 @@ Call `prey8_perceive` with the user's probe AND all three gate fields:
 - `stigmergy_digest`: Summary of recent stigmergy events consumed.
 
 ### TILE 1 — REACT (P1 BRIDGE + P7 NAVIGATE)
-Call `prey8_react` with the perceive nonce AND all five gate fields:
+Call `prey8_react` with the perceive nonce AND all nine gate fields:
 - `perceive_nonce`: Nonce from perceive.
 - `analysis`: Your interpretation of the context.
-- `plan`: High-level plan (what and why).
+- `tactical_plan`: Your immediate, low-level plan of action (for <8 Meadows level).
+- `strategic_plan`: Your higher-level plan of action (for >=8 Meadows level) that the tactical plan connects to.
+- `sequential_thinking`: Auditable AI thoughts showing your reasoning process.
+- `cynefin_classification`: The Cynefin domain (Clear, Complicated, Complex, Chaotic, Disorder).
 - `shared_data_refs`: Cross-references bridged from other contexts.
 - `navigation_intent`: Strategic direction and C2 steering decision.
 - `meadows_level`: Leverage level (1-13). CRITICAL: If <4, you are WRONG (trapped in parameters/buffers). If <8, you are INCOMPLETE (trapped in delays/info flows). You must operate at L8+ (Rules/Self-Org/Goal/Paradigm) to alter the architecture. L13 is the Divine Pantheon (HFO).
