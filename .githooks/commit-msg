@@ -1,0 +1,33 @@
+#!/bin/sh
+# ─── HFO Gen90 Commit-Msg Hook ───────────────────────────────
+# Gate: Semantic Anti-Slop Validation for Commit Messages
+# ──────────────────────────────────────────────────────────────
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+COMMIT_MSG_FILE=$1
+
+echo "► Running AI Semantic Anti-Slop Gate on commit message..."
+
+# Run the Python AI gate script
+if command -v python >/dev/null 2>&1; then
+    python hfo_gen_90_hot_obsidian_forge/0_bronze/2_resources/precommit_ai_gate.py "$COMMIT_MSG_FILE"
+    EXIT_CODE=$?
+elif command -v python3 >/dev/null 2>&1; then
+    python3 hfo_gen_90_hot_obsidian_forge/0_bronze/2_resources/precommit_ai_gate.py "$COMMIT_MSG_FILE"
+    EXIT_CODE=$?
+else
+    echo "${YELLOW}⚠ AI GATE SKIPPED:${NC} Python not found."
+    EXIT_CODE=0
+fi
+
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "${RED}═══ BLOCKED: Commit message rejected by AI Gate. ═══${NC}"
+    echo "Please write a meaningful commit message explaining WHAT and WHY."
+    exit 1
+fi
+
+exit 0

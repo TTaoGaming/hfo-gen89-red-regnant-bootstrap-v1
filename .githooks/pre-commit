@@ -1,5 +1,5 @@
 #!/bin/sh
-# ─── HFO Gen89 Pre-Commit Hook ───────────────────────────────
+# ─── HFO Gen90 Pre-Commit Hook ───────────────────────────────
 # Gate: medallion boundary + root cleanliness + no secrets
 # Install: git config core.hooksPath .githooks
 # ──────────────────────────────────────────────────────────────
@@ -18,11 +18,11 @@ NC='\033[0m'
 
 ERRORS=0
 
-echo "═══ HFO Gen89 Pre-Commit Gate ═══"
+echo "═══ HFO Gen90 Pre-Commit Gate ═══"
 
 # ── 1. Root Cleanliness ──────────────────────────────────────
 # Only allowed root files (no deep forge stuff leaking to root)
-ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.gitattributes|\.githooks|\.github|\.vscode|hfo_gen89_pointers_blessed\.json|hfo_gen90_pointers_blessed\.json|hfo_gen_89_hot_obsidian_forge|hfo_gen_90_hot_obsidian_forge|LICENSE|README\.md|\.git|pytest\.ini|tests|features|_scratch|_demote_forge\.py|_freeze_gen89\.py|_scaffold_gen90\.py|_fix_para_gen90\.py"
+ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.gitattributes|\.githooks|\.github|\.vscode|hfo_pointers\.py|hfo_gen_90_hot_obsidian_forge|hfo_gen_90_hot_obsidian_forge|LICENSE|README\.md|\.git|pytest\.ini|tests|features|_scratch|_demote_forge\.py|_freeze_gen90\.py|_scaffold_gen90\.py|_fix_para_gen90\.py"
 
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 
@@ -33,7 +33,7 @@ for f in $STAGED_FILES; do
         base=$(basename "$f")
         if ! echo "$base" | grep -qE "^($ALLOWED_ROOT)$"; then
             echo "${RED}✗ ROOT VIOLATION:${NC} $f is not in the allowed root file list"
-            echo "  Move to forge: hfo_gen_89_hot_obsidian_forge/0_bronze/"
+            echo "  Move to forge: hfo_gen_90_hot_obsidian_forge/0_bronze/"
             ERRORS=$((ERRORS + 1))
         fi
     fi
@@ -149,7 +149,7 @@ done
 
 # ── 6. Omega v13 Lint & Zod Gate ────────────────────────────
 # If ESLint is configured in the microkernel project, run it on staged TS files.
-OMEGA_DIR="hfo_gen_89_hot_obsidian_forge/1_silver/projects/omega_v13_microkernel"
+OMEGA_DIR="hfo_gen_90_hot_obsidian_forge/1_silver/projects/omega_v13_microkernel"
 OMEGA_ESLINT="$OMEGA_DIR/eslint.config.mjs"
 OMEGA_STAGED_TS=$(echo "$STAGED_FILES" | tr ' ' '\n' | grep -E "$OMEGA_DIR/.*\.tsx?$" || true)
 
@@ -212,6 +212,35 @@ if [ -f "$OMEGA_ESLINT" ] && [ -n "$OMEGA_STAGED_TS" ]; then
     fi
 elif [ -n "$OMEGA_STAGED_TS" ] && [ ! -f "$OMEGA_ESLINT" ]; then
     echo "${YELLOW}⚠ OMEGA-LINT:${NC} TypeScript staged but no eslint.config.mjs yet — skipping (add ESLint to enforce arch boundaries)"
+fi
+
+# ── 7. Python Pytest Gate (Correct-by-Construction) ──────────
+# If any Python files are staged, run pytest to ensure tests pass.
+PY_STAGED=$(echo "$STAGED_FILES" | tr ' ' '\n' | grep -E "\.py$" || true)
+if [ -n "$PY_STAGED" ]; then
+    echo "► Running Pytest Gate on Python files..."
+    if command -v pytest >/dev/null 2>&1; then
+        pytest --maxfail=1 --disable-warnings -q
+        PYTEST_EXIT=$?
+    elif [ -f ".venv/Scripts/pytest.exe" ]; then
+        .venv/Scripts/pytest.exe --maxfail=1 --disable-warnings -q
+        PYTEST_EXIT=$?
+    else
+        echo "${YELLOW}⚠ PYTEST SKIPPED:${NC} pytest not found in PATH or .venv."
+        PYTEST_EXIT=0
+    fi
+
+    if [ $PYTEST_EXIT -ne 0 ]; then
+        if [ "${HFO_BYPASS_TESTS:-0}" = "1" ]; then
+            echo "${YELLOW}⚠ PYTEST:${NC} Tests failed but bypassed (HFO_BYPASS_TESTS=1)"
+        else
+            echo "${RED}✗ PYTEST FAILED:${NC} Correct-by-Construction genesis requires passing tests."
+            echo "  Operator override: HFO_BYPASS_TESTS=1 git commit -m '...'"
+            ERRORS=$((ERRORS + 1))
+        fi
+    else
+        echo "${GREEN}✓${NC} Pytest suite passed"
+    fi
 fi
 
 # ── Result ────────────────────────────────────────────────────
