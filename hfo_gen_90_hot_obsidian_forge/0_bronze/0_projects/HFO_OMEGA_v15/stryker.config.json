@@ -13,7 +13,12 @@
     "enableFindRelatedTests": true
   },
   "mutate": [
-    "gesture_fsm.ts"
+    "gesture_fsm.ts",
+    "highlander_mutex_adapter.ts",
+    "stillness_monitor_plugin.ts",
+    "wood_grain_tuning.ts",
+    "hud_plugin.ts",
+    "temporal_rollup.ts"
   ],
   "thresholds": {
     "high": 90,

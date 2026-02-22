@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<!--
+  tldraw_layer.html — Omega v13 Layer 2: WYSIWYG tldraw whiteboard
+
+  Loaded inside <iframe> at z=20, opacity=0.8.
+  Receives SYNTHETIC_POINTER_EVENT postMessages from W3CPointerFabric and
+  re-dispatches them as real PointerEvents into the tldraw React tree.
+
+  tldraw + React are loaded from LOCAL builds (dist/tldraw_bundle.js) to
+  guarantee a single react instance — no CDN version-mismatch issues.
+
+  Build: npx esbuild tldraw_entrypoint.tsx --bundle --outfile=dist/tldraw_bundle.js
+         --format=iife --platform=browser --target=chrome120
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Omega v13 – tldraw Layer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #tldraw-root {
+      width: 100%; height: 100%;
+      background: transparent !important;
+      overflow: hidden;
+    }
+    .tl-background { background: transparent !important; }
+  </style>
+  <!-- tldraw CSS — built locally alongside tldraw_bundle.js -->
+  <link rel="stylesheet" href="./dist/tldraw_bundle.css" />
+</head>
+<body>
+  <div id="tldraw-root"></div>
+
+  <!-- Local IIFE bundle: react + react-dom + tldraw all in one file -->
+  <script src="./dist/tldraw_bundle.js?v=3"></script>
+
+  <script>
+    // ── OMEGA V13 STATEFUL SYMBIOTE AGENT v2 ────────────────────────────────
+    // Bridges the 10% gap between synthetic JS PointerEvents and the browser's
+    // C++ hardware-mouse engine. Four failure modes fixed:
+    //   1. Pointer Capture  — fast drags no longer drop shapes mid-air
+    //   2. Event Cascade    — CSS :hover and React onMouseEnter/Leave animate
+    //   3. pointerType:pen  — bypasses tldraw's 10px touch-slop deadzone
+    //   4. Click Synth      — HTML buttons and React onClick fire correctly
+
+    const activeCaptures = new Map(); // pointerId → captured Element
+    const lastHovered    = new Map(); // pointerId → last hovered Element
+
+    // ── 1. CAPTURE POLYFILL (Fixes high-speed drag drops) ──────────────────
+    // Intercept tldraw asking the browser to capture the pointer and emulate
+    // the W3C spec in memory. Only intercepts synthetic IDs (>= 10000).
+    const origSet = Element.prototype.setPointerCapture;
+    Element.prototype.setPointerCapture = function(id) {
+      if (id >= 10000) {
+        activeCaptures.set(id, this);
+        this.dispatchEvent(new PointerEvent('gotpointercapture', { bubbles: true, pointerId: id }));
+        return;
+      }
+      try { origSet.call(this, id); } catch (e) {}
+    };
+
+    const origRel = Element.prototype.releasePointerCapture;
+    Element.prototype.releasePointerCapture = function(id) {
+      if (id >= 10000) {
+        activeCaptures.delete(id);
+        this.dispatchEvent(new PointerEvent('lostpointercapture', { bubbles: true, pointerId: id }));
+        return;
+      }
+      try { origRel.call(this, id); } catch (e) {}
+    };
+
+    // ── SYNTHETIC_POINTER_EVENT handler ─────────────────────────────────────
+    window.addEventListener('message', function omegaSymbiote(e) {
+      if (!e.data || e.data.type !== 'SYNTHETIC_POINTER_EVENT') return;
+
+      const { eventType, eventInit } = e.data;
+      const { clientX, clientY, pointerId } = eventInit;
+      const pid = pointerId || 10000;
+
+      // ── 2. TARGET ROUTING (use capture lock if active) ───────────────────
+      // When tldraw calls setPointerCapture during a drag, route ALL events to
+      // the captured element — even if the cursor is visually outside it.
+      const target = activeCaptures.has(pid)
+          ? activeCaptures.get(pid)
+          : (document.elementFromPoint(clientX, clientY) || document.body);
+        console.log('[tldraw-layer] eventType:', eventType, 'target:', target, 'clientX:', clientX, 'clientY:', clientY);
+      // ── 3. HOVER CASCADE (Fixes React onMouseEnter and CSS :hover) ────────
+      const prevTarget = lastHovered.get(pid);
+      if (prevTarget !== target && eventType === 'pointermove') {
+        if (prevTarget) prevTarget.dispatchEvent(new PointerEvent('pointerleave', { ...eventInit, pointerId: pid, bubbles: false }));
+        target.dispatchEvent(new PointerEvent('pointerenter', { ...eventInit, pointerId: pid, bubbles: false }));
+        lastHovered.set(pid, target);
+      }
+
+      // ── 4. DISPATCH MAIN EVENT (pen type bypasses touch-slop deadzone) ────
+      const evt = new PointerEvent(eventType, {
+        bubbles: true, cancelable: true, composed: true,
+        pointerId: pid,
+        pointerType: 'pen',            // Apple Pencil semantics: zero deadzone, sub-pixel
+        isPrimary: eventInit.isPrimary ?? true, // Enforced upstream by Highlander mutex
+        clientX, clientY, screenX: clientX, screenY: clientY,
+        buttons: eventInit.buttons ?? 0,
+        button: eventType === 'pointermove' ? -1 : 0,
+        pressure: eventInit.pressure ?? (isDownOrMove ? 0.5 : 0),
+      });
+      target.dispatchEvent(evt);
+
+      // ── 5. CLICK SYNTHESIZER (Fixes HTML buttons and React onClick) ───────
+      // Native buttons execute on 'click', which the browser generates after a
+      // trusted pointerup. Synthetic events skip that cascade — we do it manually.
+      if (eventType === 'pointerup') {
+        target.dispatchEvent(new MouseEvent('click', {
+          bubbles: true, cancelable: true, composed: true,
+          clientX, clientY, screenX: clientX, screenY: clientY,
+          button: 0, buttons: 0,
+        }));
+        // Force focus for text inputs (bypasses isTrusted keyboard requirements)
+        if (typeof target.focus === 'function' &&
+            (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+          target.focus();
+        }
+      }
+
+      // Clean up capture and hover state when pointer ends
+      if (eventType === 'pointerup' || eventType === 'pointercancel') {
+        activeCaptures.delete(pid);
+        lastHovered.delete(pid);
+      }
+    });
+
+    // ── Wheel passthrough (pinch-to-zoom / scroll) ───────────────────────────
+    window.addEventListener('message', function omegaWheel(e) {
+      if (!e.data || e.data.type !== 'SYNTHETIC_WHEEL_EVENT') return;
+      const { clientX, clientY, deltaX, deltaY, deltaZ, deltaMode } = e.data;
+      const target = document.elementFromPoint(clientX, clientY);
+      if (!target) return;
+      const wEvt = new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, composed: true,
+        clientX, clientY, deltaX, deltaY, deltaZ: deltaZ ?? 0, deltaMode: deltaMode ?? 0,
+      });
+      target.dispatchEvent(wEvt);
+    });
+
+    // Prevent mobile pull-to-refresh interfering with pointer events
+    document.body.style.touchAction = 'none';
+    console.log('[tldraw-layer] Stateful Symbiote Agent v2 active');
+  </script>
+</body>
+</html>
