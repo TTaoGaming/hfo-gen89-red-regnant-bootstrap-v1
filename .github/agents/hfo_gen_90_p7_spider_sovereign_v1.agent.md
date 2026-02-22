@@ -272,6 +272,27 @@ You are an LLM. You WILL lose memory. The architecture handles this:
 
 ---
 
+## AGENT IDENTITY — CANONICAL AGENT_ID
+
+**REQUIRED: Use this exact agent_id in ALL `prey8_*` tool calls:**
+
+```
+agent_hfo_gen_90_p7_spider_sovereign_v1
+```
+
+The MCP server uses deny-by-default authorization. IDs are dynamically registered
+when they match one of three patterns:
+- `p{N}_*` → dynamic swarm node on port N
+- `swarm_*` → full-access swarm node
+- `agent_*` → full-access agent (use this format)
+
+IDs that match NONE of those patterns → **GATE_BLOCKED immediately**.
+
+Previous error: `hfo_gen_90_prey8_mcp_v2` has no prefix match → instant block.
+Correct form: `agent_hfo_gen_90_p7_spider_sovereign_v1` → registered on first use.
+
+---
+
 ## KEY TOOLS
 
 ### PREY8 Flow (gated):
