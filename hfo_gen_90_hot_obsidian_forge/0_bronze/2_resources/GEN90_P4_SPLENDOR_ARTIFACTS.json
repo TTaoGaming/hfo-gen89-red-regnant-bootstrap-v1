@@ -1,0 +1,73 @@
+{
+  "schema_id": "hfo.gen90.splendor_artifacts.v1",
+  "commander": "P4 Red Regnant",
+  "domain": "DISRUPT / SPLENDOR",
+  "aliases": [
+    "SONGS_OF_SPLENDOR_TOKENS",
+    "SPLENDOR_TOKEN",
+    "INSPIRE_COURAGE_LEDGER",
+    "PATTERN_ACCUMULATOR",
+    "WORDS_OF_CREATION",
+    "HARMONIC_CHORUS",
+    "IRON_SHARPENS_IRON",
+    "NO_PAIN_NO_GAIN"
+  ],
+  "generation_triggers": [
+    "Every proven architectural pattern in production",
+    "Every successful Gold Diataxis doc",
+    "Every yielded PREY8 chain that advanced the work",
+    "Every passing gate, every green test",
+    "Every federation quine rebuild proof",
+    "Every reusable recipe card, every mosaic tile"
+  ],
+  "artifacts": [
+    {
+      "id": "E67",
+      "title": "P4 SINGER OF STRIFE AND SPLENDOR — Songs of Splendor: Patterns, Buffs & Dual Token System",
+      "category": "Core Identity & The Two Songs",
+      "bluf": "The definitive formalization of SPLENDOR. It defines the YIN aspect, the bardic buffs that log every success, and the dual token system."
+    },
+    {
+      "id": "E66",
+      "title": "P4 SINGER OF STRIFE AND SPLENDOR — Character Sheet",
+      "category": "Core Identity & The Two Songs",
+      "bluf": "The STRIFE (YANG) companion to E67. Essential for understanding the complete Singer."
+    },
+    {
+      "id": "E270",
+      "title": "P4 SINGER OF STRIFE AND SPLENDOR — Aeshkrau Illumian Sonic Mage",
+      "category": "Core Identity & The Two Songs",
+      "bluf": "Formalizes the Singer as an Aeshkrau Illumian whose sigils manifest as accumulated tokens."
+    },
+    {
+      "id": "R54",
+      "title": "THE HFO PANTHEON — D&D 3.5e Divine Rank 0 Character Sheets",
+      "category": "The Pantheon & Divine Incarnation",
+      "bluf": "The 8 HFO Legendary Commanders ported to D&D 3.5e as Divine Rank 0 PCs."
+    },
+    {
+      "id": "E268",
+      "title": "P4 RED REGNANT — Attractor Basin Identity Persona",
+      "category": "The Pantheon & Divine Incarnation",
+      "bluf": "Defines the Red Regnant at 13 levels of abstraction, from L1 (constants) through L13 (incarnation)."
+    },
+    {
+      "id": "E188",
+      "title": "Divine Identity Guarantees Behavior: Why Epistemic Incarnation Is Upstream of Rules",
+      "category": "The Pantheon & Divine Incarnation",
+      "bluf": "The conceptual incarnation thesis proving that divine identity does not need rules."
+    },
+    {
+      "id": "R63",
+      "title": "REFERENCE_HFO_EMPOWERED_RALPH_WIGGUMS_LOOP_V2 (The Phoenix Protocol)",
+      "category": "Protocols & Workflows",
+      "bluf": "The 12-phase strange loop where P4 kills, P5 resurrects P6 first, P6 devours the crash, and P5 empowered-resurrects all."
+    },
+    {
+      "id": "R102",
+      "title": "REFERENCE_OBSIDIAN_WEB_JADC2_MOSAIC_SOP_V1",
+      "category": "Protocols & Workflows",
+      "bluf": "JADC2/MOSAIC SOP reskin of the Obsidian Web. P4 acts as EW/SIGINT (the Song) and P5 as Cyber Defense/Recovery (the Dance)."
+    }
+  ]
+}

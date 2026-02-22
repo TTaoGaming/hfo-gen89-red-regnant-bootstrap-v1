@@ -83,7 +83,7 @@ def _find_root() -> Path:
 
 HFO_ROOT      = _find_root()
 SSOT_DB        = HFO_ROOT / "hfo_gen_90_hot_obsidian_forge" / "2_gold" / "2_resources" / "hfo_gen90_ssot.sqlite"
-MODEL_CACHE    = HFO_ROOT / ".hfo_models"
+MODEL_CACHE    = HFO_ROOT / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "2_resources" / ".hfo_models"
 GEN            = os.environ.get("HFO_GENERATION", "89")
 SWARM_SOURCE   = f"hfo_p6_kraken_swarm_gen{GEN}"
 

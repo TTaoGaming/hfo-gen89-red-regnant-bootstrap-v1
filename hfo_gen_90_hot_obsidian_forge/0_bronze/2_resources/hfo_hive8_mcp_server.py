@@ -34,7 +34,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -65,7 +65,7 @@ SERVER_VERSION = "v1.0"
 # ---------------------------------------------------------------------------
 # AGENT REGISTRY — Deny-by-Default Authorization
 # ---------------------------------------------------------------------------
-AGENT_REGISTRY = {
+AGENT_REGISTRY: dict[str, dict[str, Any]] = {
     "p0_lidless_legion": {"display_name": "P0 Lidless Legion", "ports": [0, 6], "allowed_gates": ["HINDSIGHT", "VALIDATED_FORESIGHT"]},
     "p1_web_weaver": {"display_name": "P1 Web Weaver", "ports": [1, 7], "allowed_gates": ["HINDSIGHT", "EVOLVE"]},
     "p2_mirror_magus": {"display_name": "P2 Mirror Magus", "ports": [2, 4], "allowed_gates": ["INSIGHT"]},
@@ -77,7 +77,7 @@ AGENT_REGISTRY = {
     "ttao_operator": {"display_name": "TTAO Operator (Human)", "ports": [0, 1, 2, 3, 4, 5, 6, 7], "allowed_gates": ["HUNT", "INSIGHT", "VERIFY", "EMIT"]},
 }
 
-def _new_session() -> dict:
+def _new_session() -> dict[str, Any]:
     return {
         "session_id": None,
         "hindsight_nonce": None,
@@ -89,9 +89,9 @@ def _new_session() -> dict:
         "agent_id": None,
     }
 
-_sessions: dict[str, dict] = {}
+_sessions: dict[str, dict[str, Any]] = {}
 
-def _get_session(agent_id: str) -> dict:
+def _get_session(agent_id: str) -> dict[str, Any]:
     if agent_id not in _sessions:
         _sessions[agent_id] = _new_session()
         _sessions[agent_id]["agent_id"] = agent_id
@@ -104,7 +104,7 @@ def _session_state_path(agent_id: str) -> Path:
     safe_id = agent_id.replace("/", "_").replace("\\", "_").replace("..", "_")
     return SESSION_STATE_DIR / f".hive8_session_{safe_id}.json"
 
-def _save_session(agent_id: str):
+def _save_session(agent_id: str) -> None:
     session = _get_session(agent_id)
     state = {
         "session_id": session["session_id"],
@@ -123,7 +123,7 @@ def _save_session(agent_id: str):
     except OSError:
         pass
 
-def _get_conn():
+def _get_conn() -> sqlite3.Connection:
     if not DB_PATH.exists():
         raise FileNotFoundError(f"SSOT database not found at {DB_PATH}")
     conn = sqlite3.connect(str(DB_PATH), timeout=10)
@@ -132,7 +132,7 @@ def _get_conn():
     conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
-def _cloudevent(event_type: str, data: dict, subject: str = "hive8") -> dict:
+def _cloudevent(event_type: str, data: dict[str, Any], subject: str = "hive8") -> dict[str, Any]:
     return {
         "specversion": "1.0",
         "id": secrets.token_hex(8),
@@ -143,9 +143,9 @@ def _cloudevent(event_type: str, data: dict, subject: str = "hive8") -> dict:
         "data": data,
     }
 
-def _write_stigmergy(event: dict) -> int:
+def _write_stigmergy(event: dict[str, Any]) -> int:
     try:
-        from hfo_ssot_write import write_stigmergy_event, build_signal_metadata
+        from hfo_ssot_write import write_stigmergy_event, build_signal_metadata  # type: ignore
         agent_id = event["data"].get("agent_id", "system")
         signal_meta = build_signal_metadata(
             port="P4",
@@ -153,13 +153,13 @@ def _write_stigmergy(event: dict) -> int:
             daemon_name=f"hive8_mcp_{agent_id}",
             daemon_version=SERVER_VERSION
         )
-        return write_stigmergy_event(
+        return int(write_stigmergy_event(
             event_type=event["type"],
             subject=event.get("subject", ""),
             data=event["data"],
             signal_metadata=signal_meta,
             source=event["source"]
-        )
+        ))
     except ImportError:
         conn = _get_conn()
         try:
@@ -172,13 +172,13 @@ def _write_stigmergy(event: dict) -> int:
                 (event["type"], event["time"], event.get("subject", ""), data_json, content_hash, event["source"])
             )
             conn.commit()
-            return cursor.lastrowid
+            return int(cursor.lastrowid or 0)
         finally:
             conn.close()
 
 def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") -> tuple[bool, str]:
     """
-    Run CI/CD fast checks (e.g., pytest, syntax checks) to ensure CORRECT-BY-CONSTRUCTION genesis.
+    Run CI/CD fast checks (e.g., pytest, syntax checks, mypy, ruff) to ensure CORRECT-BY-CONSTRUCTION genesis.
     Returns (passed, output_string).
     """
     root_dir = _find_root()
@@ -207,7 +207,43 @@ def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") 
                 passed = False
                 output.append(f"Failed to syntax check {py_file}: {str(e)}")
 
-    # 2. Run pytest in the workspace root
+    # 2. Run ruff check on modified/created Python files
+    for py_file in py_files:
+        file_path = root_dir / py_file
+        if file_path.exists():
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "ruff", "check", str(file_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode != 0:
+                    passed = False
+                    output.append(f"Ruff linting failed in {py_file}:\n{result.stdout}\n{result.stderr}")
+            except Exception as e:
+                passed = False
+                output.append(f"Failed to run ruff on {py_file}: {str(e)}")
+
+    # 3. Run mypy --strict on modified/created Python files
+    for py_file in py_files:
+        file_path = root_dir / py_file
+        if file_path.exists():
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "mypy", "--strict", str(file_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if result.returncode != 0:
+                    passed = False
+                    output.append(f"Mypy strict type check failed in {py_file}:\n{result.stdout}\n{result.stderr}")
+            except Exception as e:
+                passed = False
+                output.append(f"Failed to run mypy on {py_file}: {str(e)}")
+
+    # 4. Run pytest in the workspace root
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "--maxfail=1", "--disable-warnings", "-q"],
@@ -228,7 +264,7 @@ def _run_fast_checks(artifacts_created: str = "", artifacts_modified: str = "") 
     else:
         return False, "\n\n".join(output)
 
-def _validate_agent(agent_id: str, gate_name: str = None) -> Optional[dict]:
+def _validate_agent(agent_id: str, gate_name: Optional[str] = None) -> Optional[dict[str, Any]]:
     if not agent_id or not agent_id.strip():
         return {"status": "GATE_BLOCKED", "reason": "DENY_BY_DEFAULT: agent_id is required.", "bricked": True}
 
@@ -258,7 +294,7 @@ def _validate_agent(agent_id: str, gate_name: str = None) -> Optional[dict]:
             return {"status": "GATE_BLOCKED", "reason": f"LEAST_PRIVILEGE: agent '{agent_id}' not authorized for {gate_name} gate.", "bricked": True}
     return None
 
-def _hash_chain(parent_hash: str, nonce: str, data: dict) -> str:
+def _hash_chain(parent_hash: str, nonce: str, data: dict[str, Any]) -> str:
     payload = f"{parent_hash}:{nonce}:{json.dumps(data, sort_keys=True)}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -268,13 +304,14 @@ def _hash_chain(parent_hash: str, nonce: str, data: dict) -> str:
 mcp = FastMCP("HFO_HIVE8_Tactical_Server")
 
 @mcp.tool()
-def hive8_hindsight(agent_id: str, tactical_objective: str, target_files: str) -> dict:
+def hive8_hindsight(agent_id: str, tactical_objective: str, target_files: str) -> dict[str, Any]:
     """
     H -- HINDSIGHT: Start a HIVE8 tactical session. First tile.
     Port pair: P0 OBSERVE + P1 BRIDGE (Locate target + map dependencies).
     """
     block = _validate_agent(agent_id, "HINDSIGHT")
-    if block: return block
+    if block:
+        return block
 
     if not tactical_objective or not target_files:
         return {"status": "GATE_BLOCKED", "reason": "Missing required fields: tactical_objective, target_files"}
@@ -314,13 +351,14 @@ def hive8_hindsight(agent_id: str, tactical_objective: str, target_files: str) -
     }
 
 @mcp.tool()
-def hive8_insight(agent_id: str, hindsight_nonce: str, files_modified: str, diff_summary: str) -> dict:
+def hive8_insight(agent_id: str, hindsight_nonce: str, files_modified: str, diff_summary: str) -> dict[str, Any]:
     """
     I -- INSIGHT: Execute the tactical change. Second tile.
     Port pair: P2 SHAPE + P4 DISRUPT (Write code + break existing structure).
     """
     block = _validate_agent(agent_id, "INSIGHT")
-    if block: return block
+    if block:
+        return block
 
     if not hindsight_nonce or not files_modified or not diff_summary:
         return {"status": "GATE_BLOCKED", "reason": "Missing required fields: hindsight_nonce, files_modified, diff_summary"}
@@ -360,13 +398,14 @@ def hive8_insight(agent_id: str, hindsight_nonce: str, files_modified: str, diff
     }
 
 @mcp.tool()
-def hive8_validated_foresight(agent_id: str, insight_token: str, test_command: str, test_output: str, status: str) -> dict:
+def hive8_validated_foresight(agent_id: str, insight_token: str, test_command: str, test_output: str, status: str) -> dict[str, Any]:
     """
     V -- VALIDATED FORESIGHT: Validate the change locally. Third tile.
     Port pair: P5 IMMUNIZE + P6 ASSIMILATE (Run tests + learn from failures).
     """
     block = _validate_agent(agent_id, "VALIDATED_FORESIGHT")
-    if block: return block
+    if block:
+        return block
 
     if not insight_token or not test_command or not test_output or not status:
         return {"status": "GATE_BLOCKED", "reason": "Missing required fields: insight_token, test_command, test_output, status"}
@@ -422,13 +461,14 @@ def hive8_validated_foresight(agent_id: str, insight_token: str, test_command: s
     }
 
 @mcp.tool()
-def hive8_evolve(agent_id: str, validated_foresight_token: str, delivery_manifest: str, tactical_yield_summary: str) -> dict:
+def hive8_evolve(agent_id: str, validated_foresight_token: str, delivery_manifest: str, tactical_yield_summary: str) -> dict[str, Any]:
     """
     E -- EVOLVE: Deliver the tactical payload. Final tile.
     Port pair: P3 INJECT + P7 NAVIGATE (Deliver payload + steer back to strategic).
     """
     block = _validate_agent(agent_id, "EVOLVE")
-    if block: return block
+    if block:
+        return block
 
     if not validated_foresight_token or not delivery_manifest or not tactical_yield_summary:
         return {"status": "GATE_BLOCKED", "reason": "Missing required fields: validated_foresight_token, delivery_manifest, tactical_yield_summary"}

@@ -206,16 +206,42 @@ def perceive(probe: str = None, port: int = None, json_output: bool = False) -> 
         "operator": os.environ.get("HFO_OPERATOR", "TTAO"),
     }
 
-    # ── Load Port Context Capsule ──
+    # ── Rehydrate Port Commander Identity + Cognitive Persistence from SQLite ──
     if port is not None:
-        capsule_path = root / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "2_resources" / "context_capsules" / f"port_{port}.json"
-        if capsule_path.exists():
-            try:
-                context["port_capsule"] = json.loads(capsule_path.read_text(encoding="utf-8"))
-            except Exception as e:
-                print(f"WARNING: Failed to load port capsule {capsule_path}: {e}", file=sys.stderr)
-        else:
-            print(f"WARNING: Port capsule not found at {capsule_path}", file=sys.stderr)
+        try:
+            # Lazy import — same directory
+            _id_sqlite_path = str(root / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "2_resources")
+            if _id_sqlite_path not in sys.path:
+                sys.path.insert(0, _id_sqlite_path)
+            import hfo_identity_sqlite as _ids
+            context["port_rehydration"] = _ids.rehydrate(port, conn, root=root)
+            health = context["port_rehydration"]["health"]
+            if health == _ids.HEALTH_BROKEN:
+                print(
+                    f"\n[FAIL-CLOSED] P{port} identity rehydration BROKEN\n"
+                    + context["port_rehydration"].get("operator_report", ""),
+                    file=sys.stderr,
+                )
+            elif health == _ids.HEALTH_DEGRADED:
+                print(
+                    f"[DEGRADED] P{port} degraded — proceeding without: "
+                    + "; ".join(context["port_rehydration"].get("degraded", [])),
+                    file=sys.stderr,
+                )
+        except Exception as _exc:
+            context["port_rehydration"] = {
+                "health": "BROKEN",
+                "missing": [f"hfo_identity_sqlite import failed: {_exc}"],
+                "degraded": [],
+                "identity": None,
+                "cognitive_persistence": {},
+                "operator_report": (
+                    f"OPERATOR REPORT — P{port} rehydration failed\n"
+                    f"  Error: {_exc}\n"
+                    f"  Run: python hfo_identity_sqlite.py ingest --port {port}"
+                ),
+            }
+            print(f"[FAIL-CLOSED] P{port} rehydration error: {_exc}", file=sys.stderr)
 
     context["doc_stats"] = query_doc_stats(conn)
     context["stigmergy_stats"] = query_stigmergy_stats(conn)
@@ -296,16 +322,47 @@ def print_human(ctx: dict, probe: str = None):
     print(f"  SSOT DB   : {ctx['ssot_db']}")
     print()
 
-    if "port_capsule" in ctx:
-        pc = ctx["port_capsule"]
-        print(f"  [PORT {pc.get('port_id')} CONTEXT LOADED]")
-        print(f"  Commander : {pc.get('commander_name')}")
-        print(f"  Domain    : {pc.get('domain')}")
-        print(f"  Gate Req  : {', '.join(pc.get('required_gate_fields', []))}")
-        if pc.get("workflows"):
-            print(f"  Workflow  : {pc['workflows'][0].get('name')}")
-            for step in pc['workflows'][0].get('steps', []):
-                print(f"    - {step}")
+    if "port_rehydration" in ctx:
+        rh = ctx["port_rehydration"]
+        port_n  = rh.get("port", "?")
+        health  = rh.get("health", "UNKNOWN")
+        cmd     = rh.get("commander", "?")
+        trigram = rh.get("trigram", "")
+        word    = rh.get("word", "")
+        health_icon = {"HEALTHY": "✓", "DEGRADED": "⚠", "BROKEN": "✗"}.get(health, "?")
+        print(f"  [{health_icon} P{port_n} {trigram} {word} — {cmd}] Health: {health}")
+
+        if health == "BROKEN":
+            print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("  FAIL CLOSED — cannot embody commander. Operator action required:")
+            for m in rh.get("missing", []):
+                print(f"    ✗ {m}")
+            report = rh.get("operator_report")
+            if report:
+                for line in report.splitlines()[3:]:   # skip redundant header lines
+                    print(f"    {line}")
+            print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        else:
+            # Identity summary
+            identity = rh.get("identity") or {}
+            directive = identity.get("embodiment_directive", "")
+            if directive:
+                print(f"  Directive : {directive[:120]}{'…' if len(directive) > 120 else ''}")
+            # Cognitive persistence summary
+            cog = rh.get("cognitive_persistence", {})
+            total = cog.get("total_entries", 0)
+            t1 = len(cog.get("tier_1_1hr", []))
+            head = cog.get("chain_head")
+            if total == 0:
+                print(f"  Memory    : ⚠ No journal entries yet (DEGRADED)")
+            else:
+                print(f"  Memory    : {total} total entries | {t1} in last 1hr")
+                if head:
+                    head_ts = head.get("timestamp", "")[:19].replace("T", " ")
+                    print(f"  Chain Head: [{head.get('entry_type','?').upper()}] {head_ts} · {head.get('content','')[:60]}")
+            if rh.get("degraded"):
+                for d in rh["degraded"]:
+                    print(f"  ⚠ DEGRADED: {d[:100]}")
         print()
 
     ds = ctx["doc_stats"]

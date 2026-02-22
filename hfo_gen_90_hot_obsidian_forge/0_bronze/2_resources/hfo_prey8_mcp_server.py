@@ -53,7 +53,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Any, cast, Dict, List, Tuple
+from typing import Optional, Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -692,15 +692,19 @@ GATE_SPECS: dict[str, dict[str, Any]] = {
         "port_pair": "P2_SHAPE + P4_DISRUPT",
         "required_fields": [
             "sbe_given", "sbe_when", "sbe_then",
-            "artifacts", "p4_adversarial_check", "sbe_test_file",
+            "artifacts", "p4_adversarial_check",
+            # sbe_test_file intentionally removed from required_fields.
+            # When provided (non-empty), the server runs it. When empty AND
+            # artifacts="none" (analysis task), gate passes with a note.
+            # This avoids bricking analysis/research tasks that produce no code.
         ],
-        "description": "Must supply SBE spec (P2), artifacts, adversarial check (P4), and an executable test file",
+        "description": "Must supply SBE spec (P2), artifacts, adversarial check (P4). sbe_test_file is run when provided.",
     },
     "YIELD": {
         "port_pair": "P3_INJECT + P5_IMMUNIZE",
         "required_fields": [
             "delivery_manifest", "test_evidence",
-            "mutation_confidence", "immunization_status",
+            "ai_confidence", "immunization_status",
             "completion_given", "completion_when", "completion_then",
         ],
         "description": "Must supply delivery manifest (P3), test evidence, Stryker receipt, and SW-4 contract (P5)",
@@ -865,7 +869,7 @@ def _validate_gate(gate_name: str, fields: dict[str, Any], agent_id: str = "") -
         elif isinstance(value, int) and field_name == "meadows_level":
             if value < 1 or value > 13:
                 empty.append(f"{field_name}(must be 1-13, got {value})")
-        elif isinstance(value, (int, float)) and field_name == "mutation_confidence":
+        elif isinstance(value, (int, float)) and field_name == "ai_confidence":
             if value < 0 or value >= 100:
                 empty.append(f"{field_name}(must be 0 to <100, got {value}. 100% is epistemic arrogance.)")
         elif isinstance(value, str) and field_name in ["tactical_plan", "strategic_plan", "sbe_given", "sbe_when", "sbe_then", "sequential_thinking"]:
@@ -915,10 +919,128 @@ def _validate_gate(gate_name: str, fields: dict[str, Any], agent_id: str = "") -
 # MCP Server
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Complexity Classifier — Tier-0/1/2 routing
+# ---------------------------------------------------------------------------
+
+# Tier 0 = conversational (perceive + yield only, 2 tool calls)
+# Tier 1 = simple technical (perceive + react + yield, 3-4 tool calls)
+# Tier 2 = complex work (full PREY8: perceive + react + execute(N) + yield)
+
+CODE_KEYWORDS = frozenset([
+    "file", "function", "class", "def ", "import", "module", "test", "pytest",
+    "refactor", "implement", "build", "create", "write", "fix", "debug",
+    "stryker", "mutation", "error", "exception", "fail", "broken",
+    "migration", "schema", "database", "sqlite", "sql", "endpoint",
+    "typescript", "javascript", "python", "node", "npm", "pip",
+])
+
+ARCHITECTURE_KEYWORDS = frozenset([
+    "architecture", "refactor", "redesign", "migrate", "overhaul",
+    "multi-file", "multi file", "all ports", "full loop", "entire",
+    "scaffold", "bootstrap", "pipeline", "integration", "deployment",
+    "design", "spec", "proposal", "system", "framework",
+])
+
+
+def _classify_query_tier(text: str) -> int:
+    """
+    Classify a user query into PREY8 complexity tier.
+
+    Returns:
+        0 = CONVERSATIONAL — casual query, short, no code/file intent
+            Route: perceive → [answer] → yield (2 tool calls)
+        1 = SIMPLE_TECHNICAL — single file/action, clear spec
+            Route: perceive → react → [work] → yield (3-4 tool calls)
+        2 = COMPLEX_WORK — multi-file, architecture, requires testing
+            Route: full PREY8 (4+ tool calls)
+    """
+    if not text:
+        return 0
+    text_lower = text.lower()
+    word_count = len(text.split())
+
+    # Tier 2 signals: architecture keywords OR long query OR file path patterns
+    has_arch = any(kw in text_lower for kw in ARCHITECTURE_KEYWORDS)
+    has_path = bool(re.search(r'[\\/]\w+\.\w+', text))
+    if has_arch or (word_count > 40) or has_path:
+        return 2
+
+    # Tier 1 signals: code keywords OR moderate length
+    has_code = any(kw in text_lower for kw in CODE_KEYWORDS)
+    if has_code or word_count > 15:
+        return 1
+
+    # Default: Tier 0 conversational
+    return 0
+
+
 mcp = FastMCP("HFO PREY8 Red Regnant v4 — Swarm-Aware Fail-Closed Gates")
 
 
 # ===== PERCEIVE — P0 OBSERVE + P6 ASSIMILATE =====
+
+@mcp.tool()
+def prey8_classify_tier(
+    text: str,
+) -> dict[str, Any]:
+    """
+    Classify a user query into PREY8 complexity tier BEFORE calling perceive.
+
+    Returns tier (0/1/2), tier_name, rationale, and routing instructions.
+    Call this FIRST on any new user message to determine protocol depth.
+
+    Tier 0 = CONVERSATIONAL: perceive → answer → yield (2 tools)
+    Tier 1 = SIMPLE_TECHNICAL: perceive → react → work → yield (3-4 tools)
+    Tier 2 = COMPLEX_WORK: full PREY8 perceive→react→execute(N)→yield
+
+    Args:
+        text: The raw user message or query to classify.
+
+    Returns:
+        dict with: tier (int), tier_name (str), rationale (str),
+                   routing (str), tool_call_estimate (str)
+    """
+    tier = _classify_query_tier(text)
+    names = ["CONVERSATIONAL", "SIMPLE_TECHNICAL", "COMPLEX_WORK"]
+    routings = [
+        "perceive → [answer] → yield",
+        "perceive → react → [work] → yield",
+        "perceive → react → execute(N) → yield",
+    ]
+    estimates = ["~2 tool calls", "~3-4 tool calls", "4+ tool calls"]
+
+    word_count = len(text.split()) if text else 0
+    has_code = any(kw in text.lower() for kw in CODE_KEYWORDS)
+    has_arch = any(kw in text.lower() for kw in ARCHITECTURE_KEYWORDS)
+    has_path = bool(re.search(r'[\\/]\w+\.\w+', text))
+
+    signals = []
+    if word_count <= 15:
+        signals.append(f"short query ({word_count} words)")
+    else:
+        signals.append(f"moderate/long query ({word_count} words)")
+    if has_code:
+        signals.append("code keywords detected")
+    if has_arch:
+        signals.append("architecture keywords detected")
+    if has_path:
+        signals.append("file path detected")
+
+    return {
+        "tier": tier,
+        "tier_name": names[tier],
+        "routing": routings[tier],
+        "tool_call_estimate": estimates[tier],
+        "rationale": "; ".join(signals) if signals else "default",
+        "instruction": (
+            f"Tier {tier} ({names[tier]}): use routing '{routings[tier]}'. "
+            "For Tier 0 casual queries: skip react+execute entirely — "
+            "perceive, answer directly, then yield. "
+            "Only escalate to Tier 2 if multi-file changes or testing required."
+        ),
+    }
+
 
 @mcp.tool()
 def prey8_perceive(
@@ -928,6 +1050,7 @@ def prey8_perceive(
     memory_refs: str,
     stigmergy_digest: str,
     web_search_query: str = "",
+    port: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     P -- PERCEIVE: Start a PREY8 session. First tile in the mosaic.
@@ -1138,6 +1261,28 @@ def prey8_perceive(
         except sqlite3.OperationalError:
             pass
 
+        # P6 ASSIMILATE: Identity rehydration (when port provided)
+        port_rehydration: Optional[dict[str, Any]] = None
+        if port is not None and 0 <= port <= 7:
+            try:
+                import importlib
+                _ids_mod = importlib.import_module("hfo_identity_sqlite")
+                port_rehydration = _ids_mod.rehydrate(port, conn, root=HFO_ROOT)
+            except Exception as _rh_exc:
+                port_rehydration = {
+                    "health": "BROKEN",
+                    "port": port,
+                    "missing": [f"hfo_identity_sqlite import/rehydrate failed: {_rh_exc}"],
+                    "degraded": [],
+                    "identity": None,
+                    "cognitive_persistence": {"available": False},
+                    "operator_report": (
+                        f"OPERATOR REPORT — P{port} identity rehydration failed\n"
+                        f"  Error: {_rh_exc}\n"
+                        f"  Remediation: python hfo_identity_sqlite.py ingest --port {port}"
+                    ),
+                }
+
         # Generate nonce and session_id
         nonce = _nonce()
         sid = _session_id()
@@ -1226,6 +1371,7 @@ def prey8_perceive(
                 "orphaned_sessions": len(orphans),
                 "orphan_details": orphans[:3],
             },
+            "port_rehydration": port_rehydration,
             "instruction": (
                 f"TILE 0 PLACED [P0+P6 GATE PASSED]. Nonce: {nonce}, Chain: {c_hash[:12]}... "
                 f"Session: {sid}. "
@@ -1507,29 +1653,27 @@ def prey8_execute(
     sbe_then: str,
     artifacts: str,
     p4_adversarial_check: str,
-    sbe_test_file: str,
+    sbe_test_file: str = "",
 ) -> dict[str, Any]:
     """
     E -- EXECUTE: Track an execution step. Middle tile(s) in the mosaic.
     Port pair: P2 SHAPE + P4 DISRUPT (creation + adversarial testing).
 
-    FAIL-CLOSED GATE: You MUST supply all six structured fields:
+    FAIL-CLOSED GATE: You MUST supply all five structured fields:
     - sbe_given: SBE precondition — "Given <context>" (P2 SHAPE workflow:
-      PARSE -> CONSTRAIN -> GENERATE -> VALIDATE -> MEDAL). What is the
-      starting state before this action?
-    - sbe_when: SBE action — "When <action>". What are you doing?
-    - sbe_then: SBE postcondition — "Then <expected result>". What should
-      be true after this action succeeds?
-    - artifacts: Comma-separated artifacts created or modified in this step
-      (P2 SHAPE output). What did you produce?
-    - p4_adversarial_check: How was this step adversarially challenged?
-      (P4 DISRUPT workflow: SURVEY -> HYPOTHESIZE -> ATTACK -> RECORD ->
-      EVOLVE). What could go wrong? What edge cases exist?
-    - sbe_test_file: Path to an executable test file (e.g., pytest script)
-      that proves the SBE contract. The server will run this file. If it fails,
-      the gate blocks.
+      PARSE -> CONSTRAIN -> GENERATE -> VALIDATE -> MEDAL).
+    - sbe_when: SBE action — "When <action>".
+    - sbe_then: SBE postcondition — "Then <expected result>".
+    - artifacts: Comma-separated artifacts created or modified (P2 SHAPE output).
+      Use "none" when producing analysis/research with no code artifacts.
+    - p4_adversarial_check: How this step was adversarially challenged
+      (P4 DISRUPT workflow: SURVEY -> HYPOTHESIZE -> ATTACK -> RECORD -> EVOLVE).
 
-    If ANY field is empty or the test file fails, you are GATE_BLOCKED.
+    OPTIONAL:
+    - sbe_test_file: Path to an executable pytest file that proves the SBE contract.
+      When provided, the server runs it and gates on success. When empty (analysis
+      tasks with no code artifacts), the gate passes with a note.
+
     Can be called multiple times for multi-step work.
 
     Args:
@@ -1611,45 +1755,46 @@ def prey8_execute(
         "sbe_then": sbe_then,
         "artifacts": artifacts_list,
         "p4_adversarial_check": p4_adversarial_check,
-        "sbe_test_file": sbe_test_file,
+        # sbe_test_file not in gate validation — it's optional (run when provided)
     }, agent_id=agent_id)
     if gate_block:
         return gate_block
 
     # ---- IDEA 4: Executable Contracts (Pytest Enforcement) ----
     root_dir = _find_root()
-    test_file_path = root_dir / sbe_test_file
-    if not test_file_path.exists() or not test_file_path.is_file():
-        return {
-            "status": "GATE_BLOCKED",
-            "reason": f"sbe_test_file '{sbe_test_file}' does not exist or is not a file.",
-            "bricked": True,
-        }
-        
-    try:
-        # Run the test file to prove the SBE contract
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", str(test_file_path), "-q", "--disable-warnings"],
-            cwd=str(root_dir),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            stdin=subprocess.DEVNULL
-        )
-        if result.returncode != 0:
+    test_receipt = "no sbe_test_file provided (analysis/research task — test skipped)"
+    if sbe_test_file and sbe_test_file.strip():
+        # Test file provided: run it and gate on result
+        test_file_path = root_dir / sbe_test_file.strip()
+        if not test_file_path.exists() or not test_file_path.is_file():
             return {
                 "status": "GATE_BLOCKED",
-                "reason": f"sbe_test_file '{sbe_test_file}' failed execution. The SBE contract is broken.",
-                "test_output": result.stdout + "\n" + result.stderr,
+                "reason": f"sbe_test_file '{sbe_test_file}' does not exist or is not a file.",
                 "bricked": True,
             }
-        test_receipt = result.stdout
-    except Exception as e:
-        return {
-            "status": "GATE_BLOCKED",
-            "reason": f"Failed to execute sbe_test_file '{sbe_test_file}': {str(e)}",
-            "bricked": True,
-        }
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pytest", str(test_file_path), "-q", "--disable-warnings"],
+                cwd=str(root_dir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                stdin=subprocess.DEVNULL
+            )
+            if result.returncode != 0:
+                return {
+                    "status": "GATE_BLOCKED",
+                    "reason": f"sbe_test_file '{sbe_test_file}' failed. SBE contract broken.",
+                    "test_output": result.stdout + "\n" + result.stderr,
+                    "bricked": True,
+                }
+            test_receipt = result.stdout
+        except Exception as e:
+            return {
+                "status": "GATE_BLOCKED",
+                "reason": f"Failed to execute sbe_test_file '{sbe_test_file}': {str(e)}",
+                "bricked": True,
+            }
 
     # ---- Gate passed — proceed with execute ----
 
@@ -1768,7 +1913,7 @@ def prey8_execute(
             f"SBE: Given/When/Then + {len(artifacts_list)} artifacts + P4 adversarial check + Pytest passed. "
             "Call prey8_execute again for more steps, "
             "or call prey8_yield to close the mosaic. "
-            "Yield requires: delivery_manifest, test_evidence, mutation_confidence(0-100), "
+            "Yield requires: delivery_manifest, test_evidence, ai_confidence(0-100), "
             "immunization_status, completion_given/when/then."
         ),
     }
@@ -1782,7 +1927,7 @@ def prey8_yield(
     summary: str,
     delivery_manifest: str,
     test_evidence: str,
-    mutation_confidence: int,
+    ai_confidence: int,
     immunization_status: str,
     completion_given: str,
     completion_when: str,
@@ -1805,7 +1950,7 @@ def prey8_yield(
     - test_evidence: Comma-separated list of tests or validations performed
       (P5 IMMUNIZE workflow: DETECT -> QUARANTINE -> GATE -> HARDEN -> TEACH).
       How was the delivery verified?
-    - mutation_confidence: 0 to <100 float representing confidence in test
+    - ai_confidence: 0 to <100 float representing confidence in test
       coverage (Stryker-inspired). 0 = no tests. 100 is epistemic arrogance
       and will be blocked. HFO goldilocks target is 80~99%.
       From 6-Defense SDD Stack doc 4: "Mutation Wall (Stryker 80-99%)".
@@ -1829,14 +1974,14 @@ def prey8_yield(
       The singer daemon reads these from yield events and sings them,
       creating a strange loop where each PREY8 cycle builds the hive songbook.
 
-    If ANY required field is empty, mutation_confidence is not 0 to <100, or
+    If ANY required field is empty, ai_confidence is not 0 to <100, or
     immunization_status is not PASSED/FAILED/PARTIAL, you are GATE_BLOCKED.
 
     Args:
         summary: What was accomplished in this session.
         delivery_manifest: Comma-separated P3 INJECT deliveries.
         test_evidence: Comma-separated P5 IMMUNIZE test results.
-        mutation_confidence: 0 to <100 float Stryker-inspired confidence score.
+        ai_confidence: 0 to <100 float Stryker-inspired confidence score.
         immunization_status: PASSED / FAILED / PARTIAL (P5 gate result).
         completion_given: SW-4 Given precondition.
         completion_when: SW-4 When action.
@@ -1906,7 +2051,7 @@ def prey8_yield(
     gate_block = _validate_gate("YIELD", {
         "delivery_manifest": delivery_list,
         "test_evidence": test_list,
-        "mutation_confidence": mutation_confidence,
+        "ai_confidence": ai_confidence,
         "immunization_status": immunization_status,
         "completion_given": completion_given,
         "completion_when": completion_when,
@@ -1926,13 +2071,13 @@ def prey8_yield(
     elif meadows_level >= 5:
         required_confidence = 70
 
-    if mutation_confidence < required_confidence:
+    if ai_confidence < required_confidence:
         return {
             "status": "GATE_BLOCKED",
             "gate": "YIELD",
             "port_pair": "P3_INJECT + P5_IMMUNIZE",
             "agent_id": agent_id,
-            "error": f"Dynamic Constraint Failed. Meadows L{meadows_level} / Cynefin '{cynefin}' requires mutation_confidence >= {required_confidence}. You provided {mutation_confidence}.",
+            "error": f"Dynamic Constraint Failed. Meadows L{meadows_level} / Cynefin '{cynefin}' requires ai_confidence >= {required_confidence}. You provided {ai_confidence}.",
             "bricked": True,
             "instruction": f"Increase test coverage to reach {required_confidence}% confidence before yielding."
         }
@@ -2040,7 +2185,7 @@ def prey8_yield(
         # Gate-enforced structured fields (P3 + P5)
         "p3_delivery_manifest": delivery_list,
         "p5_test_evidence": test_list,
-        "p5_mutation_confidence": mutation_confidence,
+        "p5_ai_confidence": ai_confidence,
         "p5_immunization_status": imm_status,
         "p5_grudge_violations": grudge_list,
         "sw4_completion_contract": {
@@ -2078,7 +2223,7 @@ def prey8_yield(
             f"PREY8 mosaic complete. Agent {agent_id}. Session {session['session_id']}. "
             f"Perceive nonce: {perceive_nonce}. "
             f"Chain: {len(session['chain']) + 1} tiles. "
-            f"Mutation confidence: {mutation_confidence}%. "
+            f"AI confidence: {ai_confidence}%. "
             f"Immunization: {imm_status}. "
             f"Summary: {summary}"
         ),
@@ -2116,18 +2261,18 @@ def prey8_yield(
             "agent_id": agent_id,
             "delivery_items": len(delivery_list),
             "test_items": len(test_list),
-            "mutation_confidence": mutation_confidence,
+            "ai_confidence": ai_confidence,
             "immunization_status": imm_status,
             "grudge_violations": len(grudge_list),
         },
         "stryker_receipt": {
-            "mutation_confidence": mutation_confidence,
+            "ai_confidence": ai_confidence,
             "immunization_status": imm_status,
             "test_evidence": test_list,
             "grudge_violations": grudge_list,
             "assessment": (
-                "FULL CONFIDENCE" if mutation_confidence >= 80 and imm_status == "PASSED"
-                else "MODERATE CONFIDENCE" if mutation_confidence >= 50
+                "FULL CONFIDENCE" if ai_confidence >= 80 and imm_status == "PASSED"
+                else "MODERATE CONFIDENCE" if ai_confidence >= 50
                 else "LOW CONFIDENCE — consider more testing"
             ),
         },
@@ -2151,7 +2296,7 @@ def prey8_yield(
             f"MOSAIC COMPLETE [ALL GATES PASSED]. "
             f"Agent {agent_id}. Session {session['session_id']}. "
             f"{len(session['chain']) + 1} tiles, all hash-linked. "
-            f"Stryker confidence: {mutation_confidence}%. "
+            f"Stryker confidence: {ai_confidence}%. "
             f"Immunization: {imm_status}. "
             "Session persisted to SSOT."
             + (f" SONG REQUESTS LOGGED: {len(_split_csv(song_requests))} requests "

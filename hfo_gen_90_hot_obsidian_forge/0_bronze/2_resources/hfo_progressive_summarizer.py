@@ -360,7 +360,8 @@ def run_batch(model_tier: str = "flash_25", batch_size: int = 20,
     if dry_run:
         print("\n[DRY RUN] Would process:")
         for doc in docs:
-            print(f"  Doc {doc['id']}: {doc['title'][:60]} ({doc['word_count']}w)")
+            title = doc['title'] or "Untitled"
+            print(f"  Doc {doc['id']}: {title[:60]} ({doc['word_count']}w)")
         return {"processed": 0, "would_process": len(docs), "status": "dry_run"}
 
     client, actual_mode = create_gemini_client()
@@ -372,7 +373,8 @@ def run_batch(model_tier: str = "flash_25", batch_size: int = 20,
     total_tokens = 0
 
     for i, doc in enumerate(docs):
-        print(f"  [{i+1}/{len(docs)}] Doc {doc['id']}: {doc['title'][:50]}...", end=" ")
+        title = doc['title'] or "Untitled"
+        print(f"  [{i+1}/{len(docs)}] Doc {doc['id']}: {title[:50]}...", end=" ")
 
         result = enrich_document(client, model_tier, doc)
 
