@@ -219,11 +219,11 @@ fi
 PY_STAGED=$(echo "$STAGED_FILES" | tr ' ' '\n' | grep -E "\.py$" || true)
 if [ -n "$PY_STAGED" ]; then
     echo "► Running Pytest Gate on Python files..."
-    if command -v pytest >/dev/null 2>&1; then
-        pytest --maxfail=1 --disable-warnings -q
-        PYTEST_EXIT=$?
-    elif [ -f ".venv/Scripts/pytest.exe" ]; then
+    if [ -f ".venv/Scripts/pytest.exe" ]; then
         .venv/Scripts/pytest.exe --maxfail=1 --disable-warnings -q
+        PYTEST_EXIT=$?
+    elif command -v pytest >/dev/null 2>&1; then
+        pytest --maxfail=1 --disable-warnings -q
         PYTEST_EXIT=$?
     else
         echo "${YELLOW}⚠ PYTEST SKIPPED:${NC} pytest not found in PATH or .venv."
