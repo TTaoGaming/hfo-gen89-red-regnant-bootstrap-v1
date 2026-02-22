@@ -33,12 +33,21 @@ module.exports = {
   // Add new tiles here as they enter the mutation-testing queue.
   // Remove tiles that have graduated to 'hardened' status.
   testMatch: [
+    // Hardened tiles (already receipted)
     "**/test_kalman_filter.test.ts",
     "**/test_event_bus.test.ts",
     "**/event_bus.spec.ts",
+    "**/pal.spec.ts",
+    "**/audio_engine_plugin.spec.ts",
     "**/test_plugin_supervisor.ts",
     "**/test_gesture_fsm.ts",
     "**/test_audio_engine_plugin.ts",
     "**/test_symbiote_injector_plugin.ts",
+    // New tiles entering Stryker queue
+    "**/test_highlander_mutex.ts",
+    "**/test_stillness_monitor_plugin.ts",
+    "**/test_wood_grain_tuning.ts",
+    "**/test_hud_plugin.ts",
+    "**/test_temporal_rollup.ts",
   ],
 };

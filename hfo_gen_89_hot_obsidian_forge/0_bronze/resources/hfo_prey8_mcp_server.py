@@ -73,8 +73,8 @@ def _find_root() -> Path:
     return Path.cwd()
 
 HFO_ROOT = _find_root()
-DB_PATH = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "2_gold" / "resources" / "hfo_gen89_ssot.sqlite"
-SESSION_STATE_DIR = HFO_ROOT / "hfo_gen_89_hot_obsidian_forge" / "0_bronze" / "resources"
+DB_PATH = HFO_ROOT / "hfo_gen_90_hot_obsidian_forge" / "2_gold" / "2_resources" / "hfo_gen90_ssot.sqlite"
+SESSION_STATE_DIR = HFO_ROOT / "hfo_gen_90_hot_obsidian_forge" / "0_bronze" / "2_resources"
 # Legacy single-file path for backward compat detection
 SESSION_STATE_PATH = SESSION_STATE_DIR / ".prey8_session_state.json"
 GEN = os.environ.get("HFO_GENERATION", "89")
@@ -661,10 +661,10 @@ GATE_SPECS = {
         "port_pair": "P3_INJECT + P5_IMMUNIZE",
         "required_fields": [
             "delivery_manifest", "test_evidence",
-            "mutation_confidence", "immunization_status",
+            "ai_confidence", "immunization_status",
             "completion_given", "completion_when", "completion_then",
         ],
-        "description": "Must supply delivery manifest (P3), test evidence, Stryker receipt, and SW-4 contract (P5)",
+        "description": "Must supply delivery manifest (P3), test evidence, AI confidence score, and SW-4 contract (P5)",
     },
 }
 
@@ -698,9 +698,9 @@ def _validate_gate(gate_name: str, fields: dict, agent_id: str = "") -> Optional
         elif isinstance(value, int) and field_name == "meadows_level":
             if value < 1 or value > 13:
                 empty.append(f"{field_name}(must be 1-13, got {value})")
-        elif isinstance(value, int) and field_name == "mutation_confidence":
-            if value < 0 or value > 100:
-                empty.append(f"{field_name}(must be 0-100, got {value})")
+        elif isinstance(value, (int, float)) and field_name == "ai_confidence":
+            if value < 0 or value >= 100:
+                empty.append(f"{field_name}(must be 0 to <100, got {value}. 100% is epistemic arrogance.)")
 
     if missing or empty:
         session = _get_session(agent_id) if agent_id else {"session_id": "pre-session"}
@@ -1404,7 +1404,7 @@ def prey8_execute(
             f"SBE: Given/When/Then + {len(artifacts_list)} artifacts + P4 adversarial check. "
             "Call prey8_execute again for more steps, "
             "or call prey8_yield to close the mosaic. "
-            "Yield requires: delivery_manifest, test_evidence, mutation_confidence(0-100), "
+            "Yield requires: delivery_manifest, test_evidence, ai_confidence(0 to <100), "
             "immunization_status, completion_given/when/then."
         ),
     }
@@ -1418,7 +1418,7 @@ def prey8_yield(
     summary: str,
     delivery_manifest: str,
     test_evidence: str,
-    mutation_confidence: int,
+    ai_confidence: int,
     immunization_status: str,
     completion_given: str,
     completion_when: str,
@@ -1441,9 +1441,10 @@ def prey8_yield(
     - test_evidence: Comma-separated list of tests or validations performed
       (P5 IMMUNIZE workflow: DETECT -> QUARANTINE -> GATE -> HARDEN -> TEACH).
       How was the delivery verified?
-    - mutation_confidence: 0-100 integer representing confidence in test
-      coverage (Stryker-inspired). 0 = no tests, 100 = mutation-tested.
-      From 6-Defense SDD Stack doc 4: "Mutation Wall (Stryker 80-99%)".
+    - ai_confidence: 0 to <100 integer representing AI confidence in the
+      delivery (retired name: mutation_confidence — renamed to avoid collision
+      with Stryker mutation testing score). 0 = no confidence, 99 = high.
+      HFO goldilocks target: 80-99%.
     - immunization_status: "PASSED" or "FAILED" or "PARTIAL" — did the
       P5 IMMUNIZE gate pass? Only PASSED means full confidence.
     - completion_given: SW-4 Completion Contract — Given (precondition).
@@ -1464,14 +1465,14 @@ def prey8_yield(
       The singer daemon reads these from yield events and sings them,
       creating a strange loop where each PREY8 cycle builds the hive songbook.
 
-    If ANY required field is empty, mutation_confidence is not 0-100, or
+    If ANY required field is empty, ai_confidence is not 0 to <100, or
     immunization_status is not PASSED/FAILED/PARTIAL, you are GATE_BLOCKED.
 
     Args:
         summary: What was accomplished in this session.
         delivery_manifest: Comma-separated P3 INJECT deliveries.
         test_evidence: Comma-separated P5 IMMUNIZE test results.
-        mutation_confidence: 0-100 Stryker-inspired confidence score.
+        ai_confidence: 0 to <100 AI confidence score (renamed from mutation_confidence).
         immunization_status: PASSED / FAILED / PARTIAL (P5 gate result).
         completion_given: SW-4 Given precondition.
         completion_when: SW-4 When action.
@@ -1525,7 +1526,7 @@ def prey8_yield(
     gate_block = _validate_gate("YIELD", {
         "delivery_manifest": delivery_list,
         "test_evidence": test_list,
-        "mutation_confidence": mutation_confidence,
+        "ai_confidence": ai_confidence,
         "immunization_status": immunization_status,
         "completion_given": completion_given,
         "completion_when": completion_when,
@@ -1568,7 +1569,7 @@ def prey8_yield(
         # Gate-enforced structured fields (P3 + P5)
         "p3_delivery_manifest": delivery_list,
         "p5_test_evidence": test_list,
-        "p5_mutation_confidence": mutation_confidence,
+        "p5_ai_confidence": ai_confidence,
         "p5_immunization_status": imm_status,
         "p5_grudge_violations": grudge_list,
         "sw4_completion_contract": {
@@ -1606,7 +1607,7 @@ def prey8_yield(
             f"PREY8 mosaic complete. Agent {agent_id}. Session {session['session_id']}. "
             f"Perceive nonce: {perceive_nonce}. "
             f"Chain: {len(session['chain']) + 1} tiles. "
-            f"Mutation confidence: {mutation_confidence}%. "
+            f"AI confidence: {ai_confidence}%. "
             f"Immunization: {imm_status}. "
             f"Summary: {summary}"
         ),
@@ -1644,18 +1645,18 @@ def prey8_yield(
             "agent_id": agent_id,
             "delivery_items": len(delivery_list),
             "test_items": len(test_list),
-            "mutation_confidence": mutation_confidence,
+            "ai_confidence": ai_confidence,
             "immunization_status": imm_status,
             "grudge_violations": len(grudge_list),
         },
         "stryker_receipt": {
-            "mutation_confidence": mutation_confidence,
+            "ai_confidence": ai_confidence,
             "immunization_status": imm_status,
             "test_evidence": test_list,
             "grudge_violations": grudge_list,
             "assessment": (
-                "FULL CONFIDENCE" if mutation_confidence >= 80 and imm_status == "PASSED"
-                else "MODERATE CONFIDENCE" if mutation_confidence >= 50
+                "FULL CONFIDENCE" if ai_confidence >= 80 and imm_status == "PASSED"
+                else "MODERATE CONFIDENCE" if ai_confidence >= 50
                 else "LOW CONFIDENCE — consider more testing"
             ),
         },
@@ -1679,7 +1680,7 @@ def prey8_yield(
             f"MOSAIC COMPLETE [ALL GATES PASSED]. "
             f"Agent {agent_id}. Session {session['session_id']}. "
             f"{len(session['chain']) + 1} tiles, all hash-linked. "
-            f"Stryker confidence: {mutation_confidence}%. "
+            f"AI confidence: {ai_confidence}%. "
             f"Immunization: {imm_status}. "
             "Session persisted to SSOT."
             + (f" SONG REQUESTS LOGGED: {len(_split_csv(song_requests))} requests "

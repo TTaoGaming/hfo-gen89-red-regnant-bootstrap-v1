@@ -1,4 +1,4 @@
-import { GestureFSM } from './gesture_fsm';
+import { GestureFSM, initWasm } from './gesture_fsm_rs_adapter';
 import { RawHandData } from './gesture_bridge';
 import { Plugin, PluginContext } from './plugin_supervisor';
 import type { ConfigManager, ConfigMosaic } from './config_ui';
@@ -40,7 +40,8 @@ export class GestureFSMPlugin implements Plugin {
         this.boundOnStillnessDetected = this.onStillnessDetected.bind(this);
     }
 
-    public init(context: PluginContext): void {
+    public async init(context: PluginContext): Promise<void> {
+        await initWasm();
         this.context = context;
         this.context.eventBus.subscribe('FRAME_PROCESSED',    this.boundOnFrameProcessed);
         this.context.eventBus.subscribe('STILLNESS_DETECTED', this.boundOnStillnessDetected);
