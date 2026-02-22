@@ -63,10 +63,26 @@ fleet_monitor_run*.log
 *_CONCAT_*.md
 *_MEGA_COMPILATION*.md
 
-# ── Omega v13 build artifacts ───────────────────────────────
+# ── Omega v13/v15 build artifacts ───────────────────────────
 test-results/
 reports/
 *.tsbuildinfo
+
+# ── Stryker mutation testing temp/output ─────────────────────
+.stryker-tmp/
+**/stryker_*.txt
+
+# ── Test coverage artifacts ───────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+coverage.xml
+
+# ── Project-level temp output files ──────────────────────────
+**/jest_hud_out.txt
+**/test_output.txt
+**/tsc_output.txt
+**/todos.txt
 
 # ── SQLite WAL/SHM (DB itself IS committed via LFS) ─────────
 *.sqlite-wal
@@ -75,5 +91,13 @@ reports/
 
 # Session scratch scripts (housekeeping)
 _scratch/
+
+# ── Root one-off operator scripts (not forge, not source) ────
+/check_ssot.py
+/cosmic-ray.toml
+/manual_prey8.py
+/doc12.md
+
 # ── VSCode extension packages (generated artifacts) ──────────
-*.vsixcommit_output.txt
+*.vsix
+commit_output.txt

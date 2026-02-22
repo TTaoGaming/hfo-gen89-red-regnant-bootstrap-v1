@@ -22,7 +22,7 @@ echo "═══ HFO Gen90 Pre-Commit Gate ═══"
 
 # ── 1. Root Cleanliness ──────────────────────────────────────
 # Only allowed root files (no deep forge stuff leaking to root)
-ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.gitattributes|\.githooks|\.github|\.vscode|hfo_pointers\.py|hfo_gen_90_hot_obsidian_forge|hfo_gen_90_hot_obsidian_forge|LICENSE|README\.md|\.git|pytest\.ini|tests|features|_scratch|_demote_forge\.py|_freeze_gen90\.py|_scaffold_gen90\.py|_fix_para_gen90\.py"
+ALLOWED_ROOT="AGENTS.md|\.env\.example|\.gitignore|\.gitattributes|\.githooks|\.github|\.vscode|hfo_pointers\.py|hfo_gen_90_hot_obsidian_forge|hfo_gen_90_hot_obsidian_forge|LICENSE|README\.md|\.git|pytest\.ini|setup\.cfg|jest\.config\.js|tests|features|_scratch|_demote_forge\.py|_freeze_gen90\.py|_scaffold_gen90\.py|_fix_para_gen90\.py"
 
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 
