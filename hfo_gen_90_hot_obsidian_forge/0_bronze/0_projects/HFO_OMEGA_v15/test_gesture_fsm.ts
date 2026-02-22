@@ -336,16 +336,16 @@ describe('GestureFSM — COMMIT release (palm-vs-fist)', () => {
         expect(d.fsm.state.type).toBe('READY');
     });
 
-    it('Given COMMIT with mixed gestures (more palm than fist), Then releases to READY', () => {
+    it('Given COMMIT with mixed gestures (palm outlasts fist), Then releases to READY', () => {
         const d = new FsmDriver();
         d.driveToCommit();
-        // Build up palm bucket: 60ms
-        d.tickN('open_palm', 0.8, 3);
-        // Add fist: 20ms (less than palm's 60ms)
-        d.tickN('closed_fist', 0.8, 1);
-        // Open palm again to fill dwell above limit: 40ms more = total dwell 120ms
-        d.tickN('open_palm', 0.8, 2);
-        expect(d.fsm.state.type).toBe('READY'); // palm bucket won
+        // Substrate uses mutual inhibition: holding one gesture for full dwell_ms fires it.
+        // Brief fist (2 ticks = 40ms) builds the fist bucket, then palm takes over.
+        // When palm becomes hot it zeroes the fist bucket (inhibits commit_to_idle).
+        // Palm then holds for 5 consecutive ticks (1st delta=20ms = 20; ×5 = 100ms).
+        d.tickN('closed_fist', 0.8, 2);  // fist builds 40ms — then palm resets it
+        d.tickN('open_palm',   0.8, 5);  // palm holds 100ms uninterrupted → READY
+        expect(d.fsm.state.type).toBe('READY'); // palm held full dwell, fist bucket was zero (inhibited)
     });
 
 });
@@ -990,6 +990,185 @@ describe('GestureFSM — COMMIT state exact boundary + drain', () => {
         d.tick('pointer_up', 0.8);      // pointer_up = non-palm/fist drain: ready=max(0,20-40)=0
         expect(d.fsm.ready_bucket_ms).toBe(0);
         expect(d.fsm.idle_bucket_ms).toBe(0);
+    });
+
+});
+
+// ─── Extension points: substrate getter, registerRule, unregisterRule ─────────
+// These tests cover the three BlockStatement no-coverage mutants at lines 310-324.
+
+describe('GestureFSM — extension points (substrate / registerRule / unregisterRule)', () => {
+
+    it('substrate getter returns the underlying substrate (not undefined)', () => {
+        const d = new FsmDriver();
+        const sub = d.fsm.substrate;
+        expect(sub).toBeDefined();
+        expect(typeof sub.getRuleDwell).toBe('function');
+    });
+
+    it('registerRule adds a custom rule that fires and transitions state', () => {
+        const d = new FsmDriver();
+        // Register a custom IDLE→READY rule with no dwell requirement
+        d.fsm.registerRule({
+            ruleId:    'custom_magic',
+            fromState: 'IDLE',
+            toState:   'READY',
+            evaluator: { conditionId: 'magic', evaluate: (frame: any) => frame.gesture === 'magic_gesture' ? frame.confidence : 0 },
+            conf_high: 0.64,
+            conf_low:  0.50,
+            dwell_ms:  0,
+            priority:  99,
+        } as any);
+        d.tick('magic_gesture', 0.8);       // custom rule fires instantly (dwell_ms=0)
+        expect(d.fsm.state.type).toBe('READY');
+    });
+
+    it('unregisterRule removes a custom rule so a subsequent matching gesture no longer fires', () => {
+        const d = new FsmDriver();
+        d.fsm.registerRule({
+            ruleId:    'temp_rule',
+            fromState: 'IDLE',
+            toState:   'READY',
+            evaluator: { conditionId: 'tmp', evaluate: (frame: any) => frame.gesture === 'tmp_gesture' ? frame.confidence : 0 },
+            conf_high: 0.64,
+            conf_low:  0.50,
+            dwell_ms:  0,
+            priority:  99,
+        } as any);
+        d.fsm.unregisterRule('temp_rule');  // remove before it can fire
+        d.tick('tmp_gesture', 0.8);         // rule is gone → no transition
+        // confidence 0.8 > coastConfLow 0.50 → no coast; no rule → stays IDLE
+        expect(d.fsm.state.type).toBe('IDLE');
+    });
+
+});
+
+// ─── IDLE inhibition hard-reset vs drain ────────────────────────────────────
+// Kills: ObjectLiteral(line 125), fromState:""(127), evaluator:""(129),
+//        inhibits:[](133), inhibits:[""](133).
+// With idle_reinforce_fist missing/broken: closed_fist can only DRAIN idle_to_ready at the
+// 2:1 rate (40ms per 20ms tick), not hard-reset it to 0.
+
+describe('GestureFSM — idle_reinforce_fist hard-reset proof', () => {
+
+    it('Given idle_to_ready dwell at 80ms, When closed_fist fires, Then dwell hard-resets to 0 (not 40ms drain remainder)', () => {
+        const d = new FsmDriver();
+        // Tick 1 (delta=0 NaN guard) → 0ms; ticks 2-5 (4 × 20ms) → 80ms accumulated
+        d.tickN('open_palm', 0.8, 5);
+        expect(d.fsm.ready_bucket_ms).toBe(80);
+        // Closed fist: idle_reinforce_fist inhibits idle_to_ready → hard-reset to 0.
+        // Without inhibition the 2:1 drain would only reduce by 40ms → 40ms remaining.
+        d.tick('closed_fist', 0.8);
+        expect(d.fsm.ready_bucket_ms).toBe(0);   // hard reset confirms inhibition fired
+        expect(d.fsm.state.type).toBe('IDLE');
+    });
+
+});
+
+// ─── State cache identity ────────────────────────────────────────────────────
+// Kills ConditionalExpression(line 200): `if (this._stateCache.type !== t)` → `if (true)`.
+// With `if (true)` the getter reallocates on every access → two consecutive calls
+// return different object references.  With the real guard they return the same one.
+
+describe('GestureFSM — state cache identity', () => {
+
+    it('state getter returns the same cached object when state has not changed', () => {
+        const d = new FsmDriver();
+        const s1 = d.fsm.state;
+        const s2 = d.fsm.state;    // no tick — state unchanged
+        expect(s1).toBe(s2);        // strict reference equality: cache hit
+    });
+
+});
+
+// ─── ready_bucket_ms in IDLE_COAST ───────────────────────────────────────────
+// Kills ConditionalExpression(line 215) `s === 'IDLE_COAST' → false`
+// AND StringLiteral(line 215) `s === 'IDLE_COAST' → s === ""`.
+// With either mutation, ready_bucket_ms in IDLE_COAST falls through to the
+// `commit_to_ready` branch (always 0) instead of `idle_to_ready` (holds preserved dwell).
+
+describe('GestureFSM — ready_bucket_ms branch in IDLE_COAST', () => {
+
+    it('Given IDLE with 40ms dwell, When forceCoast(), Then ready_bucket_ms still reads idle_to_ready dwell', () => {
+        const d = new FsmDriver();
+        // 3 ticks: tick1 delta=0 → 0ms; ticks 2–3 (2×20ms) → 40ms
+        d.tickN('open_palm', 0.8, 3);
+        expect(d.fsm.state.type).toBe('IDLE');
+        expect(d.fsm.ready_bucket_ms).toBe(40);
+        // Coast transition preserves dwell accumulators (not a state reset)
+        d.fsm.forceCoast();
+        expect(d.fsm.state.type).toBe('IDLE_COAST');
+        // Must still return the idle_to_ready dwell (40ms), not commit_to_ready (0)
+        expect(d.fsm.ready_bucket_ms).toBe(40);
+    });
+
+});
+
+// ─── configure() dwellCommitMs patches commit_to_ready AND commit_to_idle ───
+// Kills StringLiteral(line 245) patchRule('commit_to_ready' → ''),
+//       ObjectLiteral(line 245)  patchRule(..., { dwell_ms } → {}),
+//       StringLiteral(line 246)  patchRule('commit_to_idle'  → ''),
+//       ObjectLiteral(line 246)  patchRule(..., { dwell_ms } → {}).
+// The existing configure test (line 452) only covers `ready_to_commit` (pointer_up→COMMIT path).
+// These two new tests cover the COMMIT release paths.
+
+describe('GestureFSM — configure() patches commit release rules', () => {
+
+    it('configure dwellCommitMs takes effect on COMMIT → READY path (open_palm release)', () => {
+        const d = new FsmDriver();
+        d.driveToCommit();
+        d.fsm.configure({ dwellCommitMs: 20 });
+        // One tick of 20ms with open_palm ≥ new 20ms dwell → transitions to READY
+        d.tick('open_palm', 0.8);
+        expect(d.fsm.state.type).toBe('READY');
+    });
+
+    it('configure dwellCommitMs takes effect on COMMIT → IDLE path (closed_fist release)', () => {
+        const d = new FsmDriver();
+        d.driveToCommit();
+        d.fsm.configure({ dwellCommitMs: 20 });
+        // One tick of 20ms with closed_fist ≥ new 20ms dwell → transitions to IDLE
+        d.tick('closed_fist', 0.8);
+        expect(d.fsm.state.type).toBe('IDLE');
+    });
+
+});
+
+// ─── COMMIT mutual inhibition hard-reset proofs ───────────────────────────────
+// Kills inhibits:[](line 175), inhibits:[""](line 175) — commit_to_ready inhibits commit_to_idle.
+// Kills inhibits:[](line 188), inhibits:[""](line 188) — commit_to_idle inhibits commit_to_ready.
+//
+// Strategy: accumulate 60ms in the TARGET bucket so that a single drain tick (40ms)
+// leaves 20ms if inhibition is absent, but 0 if inhibition fires (hard-reset then drain from 0).
+
+describe('GestureFSM — COMMIT mutual inhibition hard-resets (lines 175 & 188)', () => {
+
+    it('Given COMMIT with 60ms idle_bucket, When open_palm fires, Then idle_bucket hard-resets to 0 (not 20ms)', () => {
+        const d = new FsmDriver();
+        d.driveToCommit();
+        // Build idle_bucket to 60ms (3 ticks × 20ms; inhibition keeps ready_bucket at 0)
+        d.tick('closed_fist', 0.8);   // idle=20ms
+        d.tick('closed_fist', 0.8);   // idle=40ms
+        d.tick('closed_fist', 0.8);   // idle=60ms  (< 100ms dwell → no IDLE transition)
+        expect(d.fsm.idle_bucket_ms).toBe(60);
+        // Open palm fires commit_to_ready → inhibits commit_to_idle → hard-reset idle_bucket
+        d.tick('open_palm', 0.8);     // delta=20ms; 20ms < 100ms dwell → still COMMIT
+        expect(d.fsm.idle_bucket_ms).toBe(0);    // hard reset: 0.  Drain-only: max(0,60-40)=20
+        expect(d.fsm.state.type).toBe('COMMIT_POINTER');
+    });
+
+    it('Given COMMIT with 60ms ready_bucket, When closed_fist fires, Then ready_bucket hard-resets to 0 (not 20ms)', () => {
+        const d = new FsmDriver();
+        d.driveToCommit();
+        // Build ready_bucket to 60ms (3 ticks × 20ms)
+        d.tick('open_palm', 0.8);     // ready=20ms
+        d.tick('open_palm', 0.8);     // ready=40ms
+        d.tick('open_palm', 0.8);     // ready=60ms  (< 100ms → no READY transition)
+        expect(d.fsm.ready_bucket_ms).toBe(60);
+        // Closed fist fires commit_to_idle → inhibits commit_to_ready → hard-reset ready_bucket
+        d.tick('closed_fist', 0.8);   // delta=20ms; 20ms < 100ms dwell → still COMMIT
+        expect(d.fsm.ready_bucket_ms).toBe(0);   // hard reset: 0.  Drain-only: max(0,60-40)=20
+        expect(d.fsm.state.type).toBe('COMMIT_POINTER');
     });
 
 });
